@@ -8,16 +8,18 @@ var invData = [], contData = [], users = [], sessionLog = [], adminActions = [];
 var currentUser = null, currentRole = null;
 var invSort = 'reciente', invFiltroEstado = 'todos', isDark = false;
 var SUPERADMIN = 'admin';
-var DEFAULT_ADMIN = { username: 'admin', password: 'admin123', role: 'admin' };
+var DEFAULT_ADMIN = { username: 'admin', password: 'admin123', role: 'superadmin' };
 
 /* ── HELPERS ── */
 var fmt = function (n) { return '$' + Number(n).toLocaleString('es-CO'); };
 var nowStr = function () { return new Date().toLocaleString('es-CO'); };
-var isAdmin = function () { return currentRole === 'admin'; };
-var isSuperAdmin = function () { return currentUser === SUPERADMIN; };
+// isAdmin: acceso admin O superadmin (superadmin tiene todos los permisos de admin)
+var isAdmin = function () { return currentRole === 'admin' || currentRole === 'superadmin'; };
+// isSuperAdmin: identificado por ROL, no por nombre de usuario
+var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 
 /* ══════════════════════════════════════════════════════
-   SUPABASE — CAPA DE DATOS
+    SUPABASE — CAPA DE DATOS
    ══════════════════════════════════════════════════════ */
 
 /* ── Mappers Supabase ↔ JS (snake_case ↔ camelCase) ── */
@@ -177,8 +179,8 @@ async function loadAll() {
   // Migrar registros de inventario sin estado
   invData.forEach(function (r) { if (!r.estado) r.estado = 'pendiente'; });
 
-  // Asegurar que exista el admin por defecto
-  if (!users.find(function (u) { return u.username === SUPERADMIN; })) {
+  // Asegurar que exista el superadmin (buscado por ROL, no por nombre)
+  if (!users.find(function (u) { return u.role === 'superadmin'; })) {
     users.unshift(DEFAULT_ADMIN);
     await dbInsertUser(DEFAULT_ADMIN);
   }
@@ -281,7 +283,7 @@ function enterApp() {
   currentRole = u.role || 'usuario';
   document.getElementById('d-av').textContent = (currentUser || '?').slice(0, 1).toUpperCase();
   document.getElementById('d-name').textContent = currentUser;
-  document.getElementById('d-roletxt').textContent = currentUser === SUPERADMIN ? 'Superadmin' : currentRole === 'admin' ? 'Administrador' : 'Usuario';
+  document.getElementById('d-roletxt').textContent = isSuperAdmin() ? 'Superadmin' : currentRole === 'admin' ? 'Administrador' : 'Usuario';
   document.getElementById('drw-admin').style.display = isAdmin() ? 'block' : 'none';
   var bnavAdmin = document.getElementById('bnav-admin'); if (bnavAdmin) bnavAdmin.style.display = isAdmin() ? 'flex' : 'none';
   var addSec = document.getElementById('add-user-section'); if (addSec) addSec.style.display = isSuperAdmin() ? '' : 'none';
@@ -617,8 +619,8 @@ async function addUser() {
 async function delUser(u) {
   if (!isSuperAdmin()) return;
   if (u === currentUser) { alert('No puedes eliminar tu propio usuario.'); return; }
-  if (u === SUPERADMIN) { alert('No se puede eliminar el superadmin.'); return; }
   var target = users.find(function (x) { return x.username === u; }) || {};
+  if (target.role === 'superadmin') { alert('No se puede eliminar el superadmin.'); return; }
   var ok = await showModal('Eliminar usuario', '¿Eliminar al usuario "' + u + '"? Su historial de sesiones y acciones se conservará.', 'Eliminar');
   if (!ok) return;
   users = users.filter(function (x) { return x.username !== u; });
@@ -629,9 +631,9 @@ async function delUser(u) {
 
 async function changeRole(username, newRole) {
   if (!isSuperAdmin()) { alert('Solo el superadmin puede cambiar roles.'); return; }
-  if (username === SUPERADMIN) { alert('No se puede cambiar el rol del superadmin.'); return; }
-  if (username === currentUser) { alert('No puedes cambiar tu propio rol.'); return; }
   var u = users.find(function (x) { return x.username === username; });
+  if (u && u.role === 'superadmin') { alert('No se puede cambiar el rol del superadmin.'); return; }
+  if (username === currentUser) { alert('No puedes cambiar tu propio rol.'); return; }
   if (!u || u.role === newRole) return;
   var ok = await showModal('Cambiar rol', '¿Cambiar a "' + username + '" de ' + u.role + ' a ' + newRole + '?', 'Confirmar', 'var(--accent)');
   if (!ok) return;
@@ -647,7 +649,7 @@ function renderUList() {
   el.innerHTML = users.map(function (u) {
     var last = sessionLog.find(function (s) { return s.user === u.username; });
     var info = last ? 'Últ. ingreso: ' + last.ingreso : 'Sin sesiones';
-    var isSA = u.username === SUPERADMIN;
+    var isSA = u.role === 'superadmin';
     var isMe = u.username === currentUser;
     var canChangeRole = isSuperAdmin() && !isSA && !isMe;
     var canDelete = isSuperAdmin() && !isSA && !isMe;
@@ -705,6 +707,7 @@ async function confirmEdit() {
   if (!newPass && newName === oldName) { errEl.textContent = 'No hay cambios que guardar.'; errEl.style.display = 'block'; return; }
 
   var changes = []; var dbChanges = {};
+  // Nunca incluir 'role' en dbChanges para evitar que el rol sea sobreescrito accidentalmente
 
   if (newName !== oldName) {
     u.username = newName; dbChanges.username = newName;
