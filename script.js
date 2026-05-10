@@ -17,19 +17,20 @@ var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 /* ══════════════════════════════════════════════════════════════════
   REALTIME — Sincronización en vivo
    ══════════════════════════════════════════════════════════════════ */
-function initRealtime() {
-  _sb
-    .channel('cambios_app')
+var _realtimeChannel = null;
 
-    /* ── Inventario ── */
+function initRealtime() {
+  /* Si ya está suscrito no hacer nada */
+  if (_realtimeChannel) return;
+
+  _realtimeChannel = _sb.channel('cambios_app')
+
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventario' },
       function (payload) {
         var nuevo = invFromDb(payload.new);
-        /* Evitar duplicado si fue este mismo usuario quien insertó */
         if (invData.find(function (r) { return r.id === nuevo.id; })) return;
         invData.unshift(nuevo);
-        renderInv();
-        renderDash();
+        renderInv(); renderDash();
       }
     )
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inventario' },
@@ -42,19 +43,16 @@ function initRealtime() {
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'inventario' },
       function (payload) {
         invData = invData.filter(function (r) { return r.id !== payload.old.id; });
-        renderInv();
-        renderDash();
+        renderInv(); renderDash();
       }
     )
 
-    /* ── Contabilidad ── */
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contabilidad' },
       function (payload) {
         var nuevo = contFromDb(payload.new);
         if (contData.find(function (r) { return r.id === nuevo.id; })) return;
         contData.unshift(nuevo);
-        renderCont();
-        renderDash();
+        renderCont(); renderDash();
       }
     )
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'contabilidad' },
@@ -67,8 +65,7 @@ function initRealtime() {
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'contabilidad' },
       function (payload) {
         contData = contData.filter(function (r) { return r.id !== payload.old.id; });
-        renderCont();
-        renderDash();
+        renderCont(); renderDash();
       }
     )
 
