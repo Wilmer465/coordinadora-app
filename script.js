@@ -989,33 +989,172 @@ function renderAcciones() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   EXPORT EXCEL
+   EXPORTAR EXCEL CON RANGO DE FECHAS
    ══════════════════════════════════════════════════════════════════ */
-function exportExcel() {
-  if (typeof XLSX === 'undefined') { alert('La librería de exportación no está disponible.'); return; }
-  var wb  = XLSX.utils.book_new();
-  var CUR = '#,##0';
 
-  var invRows = invData.map(function (r, i) {
-    return { '#': i + 1, 'Guia': r.guia, 'N Bodega': r.bodega, 'PIN': r.pin, 'Estado': r.estado || 'pendiente', 'Fecha': r.fecha };
+function parseFechaCO(str) {
+  if (!str) return null;
+  try {
+    var m = str.match(/(\d+)\/(\d+)\/(\d{4})/);
+    if (!m) return null;
+    return new Date(+m[3], +m[2] - 1, +m[1]);
+  } catch (e) { return null; }
+}
+
+function filtrarPorFecha(arr, desde, hasta) {
+  return arr.filter(function (r) {
+    var d = parseFechaCO(r.fecha);
+    if (!d) return true;
+    if (desde && d < desde) return false;
+    if (hasta && d > hasta) return false;
+    return true;
   });
-  var wsInv = XLSX.utils.json_to_sheet(invRows.length ? invRows : [{ '#': '', 'Guia': 'Sin registros', 'N Bodega': '', 'PIN': '', 'Estado': '', 'Fecha': '' }]);
+}
+
+function closeExportModal() {
+  var bg = document.getElementById('export-bg');
+  if (bg) bg.remove();
+}
+
+function exportExcel() {
+  /* Eliminar modal anterior si existe */
+  closeExportModal();
+
+  var hoy    = new Date().toISOString().slice(0, 10);
+  var hace30 = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+
+  /* Crear modal en el momento */
+  var modal = document.createElement('div');
+  modal.id = 'export-bg';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:var(--bg2,#fff);border-radius:14px;padding:28px;width:340px;max-width:94vw">
+      <div style="font-weight:600;font-size:15px;margin-bottom:18px;color:var(--text,#222)">
+        Exportar Excel
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <label style="font-size:12px;color:var(--text2,#555);display:flex;flex-direction:column;gap:4px">
+          Desde
+          <input type="date" id="exp-desde" value="${hace30}"
+            style="padding:8px 10px;border-radius:8px;border:1px solid var(--b,#ccc);
+                   background:var(--bg2,#fff);color:var(--text,#222);font-size:13px">
+        </label>
+        <label style="font-size:12px;color:var(--text2,#555);display:flex;flex-direction:column;gap:4px">
+          Hasta
+          <input type="date" id="exp-hasta" value="${hoy}"
+            style="padding:8px 10px;border-radius:8px;border:1px solid var(--b,#ccc);
+                   background:var(--bg2,#fff);color:var(--text,#222);font-size:13px">
+        </label>
+        <div style="font-size:11px;color:var(--text3,#999)">
+          Deja vacío para exportar todos los registros.
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:20px">
+        <button id="exp-cancel"
+          style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--b,#ccc);
+                 background:transparent;color:var(--text2,#555);font-size:13px;cursor:pointer">
+          Cancelar
+        </button>
+        <button id="exp-ok"
+          style="flex:1;padding:9px;border-radius:8px;border:none;
+                 background:var(--accent,#1a6ef5);color:#fff;font-size:13px;
+                 font-weight:600;cursor:pointer">
+          Descargar
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  document.getElementById('exp-cancel').onclick = closeExportModal;
+  document.getElementById('exp-ok').onclick     = doExportExcel;
+
+  /* Cerrar al hacer clic fuera del panel */
+  modal.addEventListener('click', function (e) {
+    if (e.target === modal) closeExportModal();
+  });
+}
+
+function doExportExcel() {
+  if (typeof XLSX === 'undefined') {
+    alert('La librería XLSX no está disponible. Verifica que el script esté cargado en el HTML.');
+    return;
+  }
+
+  var desdeStr = (document.getElementById('exp-desde').value || '').trim();
+  var hastaStr = (document.getElementById('exp-hasta').value || '').trim();
+
+  var desde = desdeStr ? new Date(desdeStr + 'T00:00:00') : null;
+  var hasta  = hastaStr ? new Date(hastaStr + 'T23:59:59') : null;
+
+  var invFiltrado  = filtrarPorFecha(invData,  desde, hasta);
+  var contFiltrado = filtrarPorFecha(contData, desde, hasta);
+
+  var rango = (desdeStr || 'inicio') + '_a_' + (hastaStr || 'hoy');
+  var CUR   = '#,##0';
+  var wb    = XLSX.utils.book_new();
+
+  /* ── Hoja Inventario ── */
+  var invRows = invFiltrado.map(function (r, i) {
+    return {
+      '#':        i + 1,
+      'Guia':     r.guia,
+      'N Bodega': r.bodega,
+      'PIN':      r.pin,
+      'Estado':   r.estado || 'pendiente',
+      'Fecha':    r.fecha
+    };
+  });
+  var wsInv = XLSX.utils.json_to_sheet(
+    invRows.length ? invRows
+      : [{ '#': '', 'Guia': 'Sin registros en el rango', 'N Bodega': '', 'PIN': '', 'Estado': '', 'Fecha': '' }]
+  );
   wsInv['!cols'] = [{ wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 22 }];
   XLSX.utils.book_append_sheet(wb, wsInv, 'Inventario');
 
-  var contRows = contData.map(function (r, i) {
-    return { '#': i + 1, 'Fecha Hora': r.fecha, 'Equipo': r.equipo, 'Valor Moneda': r.valorM, 'Valor Billete': r.valorB, 'Total': r.total };
+  /* ── Hoja Contabilidad ── */
+  var contRows = contFiltrado.map(function (r, i) {
+    return {
+      '#':             i + 1,
+      'Fecha Hora':    r.fecha,
+      'Equipo':        r.equipo,
+      'Valor Moneda':  r.valorM,
+      'Valor Billete': r.valorB,
+      'Total':         r.total
+    };
   });
-  var wsCont = XLSX.utils.json_to_sheet(contRows.length ? contRows : [{ '#': '', 'Fecha Hora': 'Sin registros', 'Equipo': '', 'Valor Moneda': 0, 'Valor Billete': 0, 'Total': 0 }]);
+  var wsCont = XLSX.utils.json_to_sheet(
+    contRows.length ? contRows
+      : [{ '#': '', 'Fecha Hora': 'Sin registros en el rango', 'Equipo': '', 'Valor Moneda': 0, 'Valor Billete': 0, 'Total': 0 }]
+  );
   wsCont['!cols'] = [{ wch: 5 }, { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }];
   var nRows = (contRows.length || 1) + 1;
   for (var row = 2; row <= nRows; row++) {
     ['D', 'E', 'F'].forEach(function (col) {
-      var ref = col + row; if (wsCont[ref]) { wsCont[ref].t = 'n'; wsCont[ref].z = CUR; }
+      var ref = col + row;
+      if (wsCont[ref]) { wsCont[ref].t = 'n'; wsCont[ref].z = CUR; }
     });
   }
   XLSX.utils.book_append_sheet(wb, wsCont, 'Contabilidad');
-  XLSX.writeFile(wb, 'Coordinadora_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+
+  /* ── Hoja Resumen ── */
+  var totalCont = contFiltrado.reduce(function (a, r) { return a + r.total; }, 0);
+  var wsRes = XLSX.utils.json_to_sheet([
+    { 'Campo': 'Rango',               'Valor': (desdeStr || 'Todos') + ' → ' + (hastaStr || 'Todos') },
+    { 'Campo': 'Total guías',         'Valor': invFiltrado.length },
+    { 'Campo': 'Entregadas',          'Valor': invFiltrado.filter(function (r) { return r.estado === 'entregado'; }).length },
+    { 'Campo': 'Pendientes',          'Valor': invFiltrado.filter(function (r) { return (r.estado || 'pendiente') === 'pendiente'; }).length },
+    { 'Campo': 'No entregadas',       'Valor': invFiltrado.filter(function (r) { return r.estado === 'no_entregado'; }).length },
+    { 'Campo': 'Registros contables', 'Valor': contFiltrado.length },
+    { 'Campo': 'Total recaudado',     'Valor': totalCont }
+  ]);
+  wsRes['!cols'] = [{ wch: 22 }, { wch: 20 }];
+  if (wsRes['B7']) { wsRes['B7'].t = 'n'; wsRes['B7'].z = CUR; }
+  XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
+
+  closeExportModal();
+  XLSX.writeFile(wb, 'Coordinadora_' + rango + '.xlsx');
 }
 
 /* ══════════════════════════════════════════════════════════════════
