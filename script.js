@@ -263,7 +263,7 @@ async function loadAll() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   PANTALLAS / TABS / DRAWER
+    PANTALLAS / TABS / DRAWER
    ══════════════════════════════════════════════════════════════════ */
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('active'); });
@@ -277,6 +277,7 @@ function toggleTheme() {
   if (tb) tb.textContent = isDark ? '☀️' : '🌙';
   sessSet('theme_v9', isDark ? 'dark' : 'light');
 }
+
 
 var TABS = ['dashboard', 'inventario', 'contabilidad', 'admin'];
 function showTab(t) {
@@ -414,6 +415,7 @@ function enterApp() {
   var cFecha = document.getElementById('c-fecha');
   if (cFecha) cFecha.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
+  initRealtime();
   showScreen('screen-app');
   showTab('dashboard');
 }
