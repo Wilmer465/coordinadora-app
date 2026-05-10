@@ -1,31 +1,3 @@
-/* ══════════════════════════════════════════════════════════════════
-   Coordinadora — Inventario & Contabilidad  |  script.js  v2.0
-   ──────────────────────────────────────────────────────────────
-   CAMBIOS DE SEGURIDAD vs v1.0:
-   · Login usa RPC verify_password() → bcrypt en el servidor
-   · Contraseñas NUNCA se guardan en memoria ni localStorage
-   · Creación de usuarios usa RPC create_user() → hash en el servidor
-   · Cambio de contraseña usa RPC change_password()
-   · Lista de usuarios cargada desde vista users_safe (sin password)
-   · Se elimina DEFAULT_ADMIN en JS (creado en SQL con bcrypt)
-   · set_session_user() activa el contexto RLS tras cada login
-
-   NOTA — SQL adicional requerido en Supabase (ejecutar una vez):
-   ──────────────────────────────────────────────────────────────
-   CREATE OR REPLACE FUNCTION public.create_user(
-     p_username TEXT, p_password TEXT, p_role TEXT DEFAULT 'operario'
-   ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-   BEGIN
-     IF char_length(p_password) < 6 THEN
-       RAISE EXCEPTION 'La contraseña debe tener al menos 6 caracteres';
-     END IF;
-     INSERT INTO public.users (username, password, role)
-     VALUES (p_username, crypt(p_password, gen_salt('bf', 12)), p_role);
-   END;
-   $$;
-   GRANT EXECUTE ON FUNCTION public.create_user TO anon;
-   ══════════════════════════════════════════════════════════════════ */
-
 /* ── CLIENTE SUPABASE ─────────────────────────────────────────── */
 const SUPABASE_URL = 'https://llkfdckqovgfguponutg.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_3LLyKJdKoG1ag4bIdDfpQg_IolLFXUQ';
@@ -41,6 +13,70 @@ var fmt    = function (n) { return '$' + Number(n).toLocaleString('es-CO'); };
 var nowStr = function () { return new Date().toLocaleString('es-CO'); };
 var isAdmin      = function () { return currentRole === 'admin' || currentRole === 'superadmin'; };
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
+
+/* ══════════════════════════════════════════════════════════════════
+  REALTIME — Sincronización en vivo
+   ══════════════════════════════════════════════════════════════════ */
+function initRealtime() {
+  _sb
+    .channel('cambios_app')
+
+    /* ── Inventario ── */
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventario' },
+      function (payload) {
+        var nuevo = invFromDb(payload.new);
+        /* Evitar duplicado si fue este mismo usuario quien insertó */
+        if (invData.find(function (r) { return r.id === nuevo.id; })) return;
+        invData.unshift(nuevo);
+        renderInv();
+        renderDash();
+      }
+    )
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inventario' },
+      function (payload) {
+        var actualizado = invFromDb(payload.new);
+        var idx = invData.findIndex(function (r) { return r.id === actualizado.id; });
+        if (idx !== -1) { invData[idx] = actualizado; renderInv(); renderDash(); }
+      }
+    )
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'inventario' },
+      function (payload) {
+        invData = invData.filter(function (r) { return r.id !== payload.old.id; });
+        renderInv();
+        renderDash();
+      }
+    )
+
+    /* ── Contabilidad ── */
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contabilidad' },
+      function (payload) {
+        var nuevo = contFromDb(payload.new);
+        if (contData.find(function (r) { return r.id === nuevo.id; })) return;
+        contData.unshift(nuevo);
+        renderCont();
+        renderDash();
+      }
+    )
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'contabilidad' },
+      function (payload) {
+        var actualizado = contFromDb(payload.new);
+        var idx = contData.findIndex(function (r) { return r.id === actualizado.id; });
+        if (idx !== -1) { contData[idx] = actualizado; renderCont(); renderDash(); }
+      }
+    )
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'contabilidad' },
+      function (payload) {
+        contData = contData.filter(function (r) { return r.id !== payload.old.id; });
+        renderCont();
+        renderDash();
+      }
+    )
+
+    .subscribe(function (status) {
+      console.log('Realtime:', status);
+    });
+}
+
 
 /* ══════════════════════════════════════════════════════════════════
    SUPABASE — CAPA DE DATOS
