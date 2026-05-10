@@ -15,7 +15,7 @@ var isAdmin      = function () { return currentRole === 'admin' || currentRole =
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 
 /* ══════════════════════════════════════════════════════════════════
-    SUPABASE — CAPA DE DATOS
+   SUPABASE — CAPA DE DATOS
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── Mappers Supabase ↔ JS ────────────────────────────────────── */
@@ -133,14 +133,14 @@ async function logAction(type, affected, detail) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-    SESIÓN DE NAVEGADOR  (localStorage)
+   SESIÓN DE NAVEGADOR  (localStorage)
    ══════════════════════════════════════════════════════════════════ */
 function sessGet(k)    { try { return localStorage.getItem(k);    } catch (e) { return null; } }
 function sessSet(k, v) { try { localStorage.setItem(k, v);        } catch (e) { }             }
 function sessDel(k)    { try { localStorage.removeItem(k);         } catch (e) { }             }
 
 /* ══════════════════════════════════════════════════════════════════
-    INICIO — CARGA GENERAL
+   INICIO — CARGA GENERAL
    ══════════════════════════════════════════════════════════════════ */
 async function loadAll() {
   /* Tema guardado */
