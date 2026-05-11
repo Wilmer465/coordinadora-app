@@ -1328,34 +1328,32 @@ function autoAddGuia(input) {
   }, 120);
 }
 
-/* ── Funciones de carga desde Supabase ── */
-
 async function dbLoadInv() {
-  const { data, error } = await supabase.from('inventario').select('*');
+  const { data, error } = await _sb.from('inventario').select('*');
   if (error) throw error;
   return data;
 }
 
 async function dbLoadCont() {
-  const { data, error } = await supabase.from('contactos').select('*');
+  const { data, error } = await _sb.from('contactos').select('*');
   if (error) throw error;
   return data;
 }
 
 async function dbLoadUsers() {
-  const { data, error } = await supabase.from('users').select('*');
+  const { data, error } = await _sb.from('users').select('*');
   if (error) throw error;
   return data;
 }
 
 async function dbLoadLog() {
-  const { data, error } = await supabase.from('session_log').select('*');
+  const { data, error } = await _sb.from('session_log').select('*');
   if (error) throw error;
   return data;
 }
 
 async function dbLoadActions() {
-  const { data, error } = await supabase.from('admin_actions').select('*');
+  const { data, error } = await _sb.from('admin_actions').select('*');
   if (error) throw error;
   return data;
 }
