@@ -489,13 +489,9 @@ function estadoLabel(e) {
 }
 
 function renderInv() {
-  var dups      = getDupGuias();
-  var dupCount  = Object.keys(dups).length;
-  var alertEl   = document.getElementById('dup-alert');
-  var invSearch = document.getElementById('inv-search');
-  var tb        = document.getElementById('inv-body');
-  if (!alertEl || !invSearch || !tb) return;
-
+  var dups     = getDupGuias();
+  var dupCount = Object.keys(dups).length;
+  var alertEl  = document.getElementById('dup-alert');
   if (dupCount > 0) {
     var totalDupItems = Object.values(dups).reduce(function (a, b) { return a + b; }, 0);
     alertEl.style.display = 'block';
@@ -503,7 +499,7 @@ function renderInv() {
       ' duplicada' + (dupCount !== 1 ? 's' : '') + ' (' + totalDupItems + ' registros en total).';
   } else { alertEl.style.display = 'none'; }
 
-  var q    = (invSearch.value || '').toLowerCase();
+  var q    = (document.getElementById('inv-search').value || '').toLowerCase();
   var rows = getSorted(invData.filter(function (r) {
     var matchQ = !q || r.guia.toLowerCase().includes(q) || r.bodega.toLowerCase().includes(q) || r.pin.toLowerCase().includes(q);
     var matchE = invFiltroEstado === 'todos' || (r.estado || 'pendiente') === invFiltroEstado;
@@ -576,6 +572,23 @@ function calcTotals() {
   document.getElementById('tot-m').textContent     = fmt(m);
   document.getElementById('tot-b').textContent     = fmt(b);
   document.getElementById('tot-total').textContent = fmt(m + b);
+}
+
+async function addContabilidad() {
+  var fecha  = document.getElementById('c-fecha').value;
+  var equipo = document.getElementById('c-equipo').value.trim();
+  if (!fecha || !equipo) { alert('Completa fecha y equipo.'); return; }
+  var m = 0, b = 0, denoms = {};
+  document.querySelectorAll('.denom').forEach(function (inp) {
+    var q = parseInt(inp.value) || 0, v = parseInt(inp.dataset.val);
+    var key = inp.dataset.tipo + v; if (q > 0) denoms[key] = q;
+    if (inp.dataset.tipo === 'M') m += q * v; else b += q * v;
+  });
+  if (m + b === 0) { alert('Ingresa al menos una denominación.'); return; }
+  var item = { id: Date.now(), fecha: new Date(fecha).toLocaleString('es-CO'), equipo: equipo, valorM: m, valorB: b, total: m + b, denoms: denoms };
+  contData.unshift(item);
+  await dbInsertCont(item);
+  renderCont(); clearContForm();
 }
 
 async function delCont(id) {
@@ -1133,21 +1146,6 @@ function doExportExcel() {
 /* ══════════════════════════════════════════════════════════════════
     UTILIDADES DE UI
    ══════════════════════════════════════════════════════════════════ */
-function autoAddGuia(inp) {
-  var raw = inp.value.replace(/\D/g, '');
-  if (raw.length === 16) {
-    inp.value = raw.slice(1, 13);
-    setTimeout(function () { addInventario(); }, 0);
-    return;
-  }
-  if (raw.length === 12) {
-    inp.value = raw;
-    setTimeout(function () { addInventario(); }, 0);
-    return;
-  }
-  // cualquier otra longitud: solo limpiar, no guardar
-}
-
 function clearInvForm() {
   ['i-guia', 'i-bodega', 'i-pin'].forEach(function (id) {
     var el = document.getElementById(id); if (el) el.value = '';
