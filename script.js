@@ -1298,30 +1298,27 @@ function togglePw(id, btn) {
 }
 
 
-
-/* ── Auto-agregar guía al escanear código de barras ─────────── */
-/* Los lectores de código de barras envían los caracteres muy rápido
-   y terminan con un salto de línea (Enter). autoAddGuia detecta eso
-   y agrega el registro automáticamente sin necesidad de hacer clic. */
+/* ════ agregar guias automaticmente ════════
 var _scanTimer = null;
 function autoAddGuia(input) {
+  /* Recortar siempre a 12 caracteres */
+  if (input.value.length > 12) {
+    input.value = input.value.slice(0, 12);
+  }
+
   var val = input.value;
 
   /* Caso 1: el escáner añadió un Enter (\n o \r) al final */
   if (val.includes('\n') || val.includes('\r')) {
-    input.value = val.replace(/[\r\n]/g, '').trim();
+    input.value = val.replace(/[\r\n]/g, '').trim().slice(0, 12);
     if (input.value) { clearTimeout(_scanTimer); addInventario(); }
     return;
   }
 
-  /* Caso 2: debounce de 120 ms — si el input fue muy rápido (escáner)
-     y no hay más teclas en ese intervalo, agregar automáticamente.
-     Un humano escribe más lento, así que esto no se dispara al tipear. */
+  /* Caso 2: debounce de 120 ms */
   clearTimeout(_scanTimer);
   if (!val.trim()) return;
-  var t0 = Date.now();
   _scanTimer = setTimeout(function () {
-    /* Solo auto-agrega si el campo sigue igual (no hubo más input) */
     if (input.value.trim() === val.trim() && val.trim().length >= 4) {
       addInventario();
     }
