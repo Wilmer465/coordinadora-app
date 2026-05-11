@@ -1328,35 +1328,5 @@ function autoAddGuia(input) {
   }, 120);
 }
 
-async function dbLoadInv() {
-  const { data, error } = await _sb.from('inventario').select('*');
-  if (error) throw error;
-  return data;
-}
-
-async function dbLoadCont() {
-  const { data, error } = await _sb.from('contactos').select('*');
-  if (error) throw error;
-  return data;
-}
-
-async function dbLoadUsers() {
-  const { data, error } = await _sb.from('users').select('*');
-  if (error) throw error;
-  return data;
-}
-
-async function dbLoadLog() {
-  const { data, error } = await _sb.from('session_log').select('*');
-  if (error) throw error;
-  return data;
-}
-
-async function dbLoadActions() {
-  const { data, error } = await _sb.from('admin_actions').select('*');
-  if (error) throw error;
-  return data;
-}
-
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
 loadAll();
