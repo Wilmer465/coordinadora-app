@@ -577,6 +577,29 @@ async function addInventario() {
     alert('Error al guardar. Intenta de nuevo.');
     return;
   }
+
+function autoAddGuia(inp) {
+  // Quitar todo lo que no sea dígito
+  var raw = inp.value.replace(/\D/g, '');
+
+  if (raw.length === 16) {
+    // Quitar el primer dígito y los 3 últimos → quedan 12
+    var guia12 = raw.slice(1, 13);
+    inp.value = guia12;
+    addInventario();                 // guarda automáticamente
+    return;
+  }
+
+  if (raw.length === 12) {
+    inp.value = raw;
+    addInventario();                 // guarda automáticamente
+    return;
+  }
+
+  // Para cualquier otra longitud, solo limpia el campo pero NO guarda
+  // (esto evita que se agregue con 4 u otro número de dígitos)
+  inp.value = raw;
+}
   clearInvForm();
 }
 
