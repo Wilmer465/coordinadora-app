@@ -15,12 +15,11 @@ var isAdmin      = function () { return currentRole === 'admin' || currentRole =
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 
 /* ══════════════════════════════════════════════════════════════════
-  REALTIME — Sincronización en vivo
+   REALTIME — Sincronización en vivo
    ══════════════════════════════════════════════════════════════════ */
 var _realtimeChannel = null;
 
 function initRealtime() {
-  /* Si ya está suscrito no hacer nada */
   if (_realtimeChannel) return;
 
   _realtimeChannel = _sb.channel('cambios_app')
@@ -76,7 +75,7 @@ function initRealtime() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-    SUPABASE — CAPA DE DATOS
+   SUPABASE — CAPA DE DATOS
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── Mappers Supabase ↔ JS ────────────────────────────────────── */
@@ -89,7 +88,13 @@ function logToDb(r)      { return { id: r.id, usuario: r.user, ingreso: r.ingres
 function actionFromDb(r) { return { id: r.id, type: r.type, by: r.by, affected: r.affected, detail: r.detail, fecha: r.fecha }; }
 function actionToDb(r)   { return { id: r.id, type: r.type, by: r.by, affected: r.affected, detail: r.detail, fecha: r.fecha }; }
 
-/* ── Inventario ───────────────────────────────────────────────── */
+/* ── Inventario — CRUD ────────────────────────────────────────── */
+async function dbLoadInv() {
+  var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
+  if (error) { console.error('Error cargando inventario:', error); return []; }
+  return (data || []).map(invFromDb);
+}
+
 async function dbInsertInv(item) {
   var { data, error } = await _sb.from('inventario')
     .insert({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado || 'pendiente', fecha: item.fecha })
@@ -105,7 +110,18 @@ async function dbUpdateInv(item) {
   if (error) console.error('Error actualizando inventario:', error);
 }
 
-/* ── Contabilidad ─────────────────────────────────────────────── */
+async function dbDeleteInv(id) {
+  var { error } = await _sb.from('inventario').delete().eq('id', id);
+  if (error) console.error('Error eliminando inventario:', error);
+}
+
+/* ── Contabilidad — CRUD ──────────────────────────────────────── */
+async function dbLoadCont() {
+  var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
+  if (error) { console.error('Error cargando contabilidad:', error); return []; }
+  return (data || []).map(contFromDb);
+}
+
 async function dbInsertCont(item) {
   var { data, error } = await _sb.from('contabilidad')
     .insert({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
@@ -121,7 +137,45 @@ async function dbUpdateCont(item) {
   if (error) console.error('Error actualizando contabilidad:', error);
 }
 
-/* ── Sesiones ─────────────────────────────────────────────────── */
+async function dbDeleteCont(id) {
+  var { error } = await _sb.from('contabilidad').delete().eq('id', id);
+  if (error) console.error('Error eliminando contabilidad:', error);
+}
+
+/* ── Usuarios — CRUD ──────────────────────────────────────────── */
+async function dbLoadUsers() {
+  var { data, error } = await _sb.from('users').select('username, role').order('username');
+  if (error) { console.error('Error cargando usuarios:', error); return []; }
+  return data || [];
+}
+
+async function dbCreateUser(username, password, role) {
+  var { error } = await _sb.rpc('create_user', { p_username: username, p_password: password, p_role: role || 'operario' });
+  return error || null;
+}
+
+async function dbDeleteUser(username) {
+  var { error } = await _sb.from('users').delete().eq('username', username);
+  if (error) console.error('Error eliminando usuario:', error);
+}
+
+async function dbUpdateUserMeta(username, updates) {
+  var { error } = await _sb.from('users').update(updates).eq('username', username);
+  if (error) console.error('Error actualizando usuario:', error);
+}
+
+async function dbChangePassword(username, newPassword) {
+  var { error } = await _sb.rpc('change_password', { p_username: username, p_password: newPassword });
+  return error || null;
+}
+
+/* ── Sesiones — CRUD ──────────────────────────────────────────── */
+async function dbLoadLog() {
+  var { data, error } = await _sb.from('session_log').select('*').order('id', { ascending: false });
+  if (error) { console.error('Error cargando sesiones:', error); return []; }
+  return (data || []).map(logFromDb);
+}
+
 async function dbInsertLog(entry) {
   var { data, error } = await _sb.from('session_log')
     .insert({ usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: entry.ingresoTS, salida: entry.salida || null, salida_ts: entry.salidaTS || null })
@@ -130,8 +184,31 @@ async function dbInsertLog(entry) {
   if (data) entry.id = data.id;
 }
 
+async function dbUpdateLog(id, updates) {
+  var { error } = await _sb.from('session_log').update(updates).eq('id', id);
+  if (error) console.error('Error actualizando sesión:', error);
+}
+
+/* ── Acciones Admin — CRUD ────────────────────────────────────── */
+async function dbLoadActions() {
+  var { data, error } = await _sb.from('admin_actions').select('*').order('id', { ascending: false });
+  if (error) { console.error('Error cargando acciones:', error); return []; }
+  return (data || []).map(actionFromDb);
+}
+
+async function logAction(type, affected, detail) {
+  var entry = { id: null, type: type, by: currentUser, affected: affected, detail: detail, fecha: nowStr() };
+  adminActions.unshift(entry);
+  var { data, error } = await _sb.from('admin_actions')
+    .insert({ type: type, by: currentUser, affected: affected, detail: detail, fecha: entry.fecha })
+    .select('id').single();
+  if (error) { console.error('Error registrando acción:', error); return; }
+  if (data) entry.id = data.id;
+}
+
+
 /* ══════════════════════════════════════════════════════════════════
-    INICIO — CARGA GENERAL
+   INICIO — CARGA GENERAL
    ══════════════════════════════════════════════════════════════════ */
 async function loadAll() {
   /* Tema guardado */
@@ -151,12 +228,10 @@ async function loadAll() {
 
   if (savedUser && savedRole) {
     try {
-      /* Verifica que el usuario siga existiendo y activa el contexto RLS */
       await _sb.rpc('set_session_user', { p_username: savedUser, p_role: savedRole });
       currentUser = savedUser;
       currentRole = savedRole;
     } catch (e) {
-      /* Sesión inválida (usuario eliminado / rol cambiado) */
       sessDel('sess_v9');
       sessDel('role_v9');
       currentUser = null;
@@ -189,8 +264,9 @@ async function loadAll() {
   }
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
-    PANTALLAS / TABS / DRAWER
+   PANTALLAS / TABS / DRAWER
    ══════════════════════════════════════════════════════════════════ */
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('active'); });
@@ -205,15 +281,18 @@ function toggleTheme() {
   sessSet('theme_v9', isDark ? 'dark' : 'light');
 }
 
-
 var TABS = ['dashboard', 'inventario', 'contabilidad', 'admin'];
 function showTab(t) {
-  TABS.forEach(function (id) { var el = document.getElementById('tab-' + id); if (el) el.style.display = id === t ? '' : 'none'; });
+  TABS.forEach(function (id) {
+    var el = document.getElementById('tab-' + id);
+    if (el) el.style.display = id === t ? '' : 'none';
+  });
   document.querySelectorAll('.nav-tab').forEach(function (el, i) {
     el.classList.toggle('active', ['dashboard', 'inventario', 'contabilidad'][i] === t);
   });
   ['dashboard', 'inventario', 'contabilidad', 'admin'].forEach(function (k) {
-    var b = document.getElementById('bnav-' + k); if (b) b.classList.toggle('active', k === t);
+    var b = document.getElementById('bnav-' + k);
+    if (b) b.classList.toggle('active', k === t);
   });
   if (t === 'dashboard')    renderDash();
   if (t === 'inventario')   renderInv();
@@ -227,10 +306,9 @@ function switchAdminTab(t) {
     document.getElementById('atab-' + k[0]).classList.toggle('active', k === t);
   });
   if (t === 'usuarios') {
-    /* Recargar usuarios frescos cada vez que se abre la pestaña */
     _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole })
-      .then(function() { return dbLoadUsers(); })
-      .then(function(data) { users = data; renderUList(); });
+      .then(function () { return dbLoadUsers(); })
+      .then(function (data) { users = data; renderUList(); });
   }
   if (t === 'sesiones') renderLog();
   if (t === 'acciones') renderAcciones();
@@ -247,8 +325,9 @@ function closeDrawer() {
   document.querySelector('.hamburger').classList.remove('open');
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
-    AUTENTICACIÓN
+   AUTENTICACIÓN
    ══════════════════════════════════════════════════════════════════ */
 async function doLogin() {
   var u   = document.getElementById('l-user').value.trim();
@@ -302,15 +381,13 @@ async function doLogin() {
   } catch (e) {
     err.style.display = 'block';
     err.textContent = 'Error: ' + e.message;
-    console.error('Login error en:', e);
+    console.error('Login error:', e);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Iniciar sesión'; }
   }
 }
 
-
 function doLogout() {
-  /* Registrar cierre de sesión */
   var open = sessionLog.find(function (s) { return s.user === currentUser && !s.salida; });
   if (open) {
     open.salida   = nowStr();
@@ -335,9 +412,8 @@ function sessSet(k, v) { try { localStorage.setItem(k, v);        } catch (e) { 
 function sessDel(k)    { try { localStorage.removeItem(k);         } catch (e) { }             }
 
 function enterApp() {
-  /* El rol ya está en currentRole (establecido en login o restauración) */
   var roleLabel = isSuperAdmin() ? 'Superadmin' : currentRole === 'admin' ? 'Administrador' : 'Operario';
-  document.getElementById('d-av').textContent
+  document.getElementById('d-av').textContent    = currentUser.slice(0, 1).toUpperCase();
   document.getElementById('d-name').textContent   = currentUser;
   document.getElementById('d-roletxt').textContent = roleLabel;
   document.getElementById('drw-admin').style.display = isAdmin() ? 'block' : 'none';
@@ -352,7 +428,7 @@ function enterApp() {
   var cFecha = document.getElementById('c-fecha');
   if (cFecha) cFecha.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
-initRealtime();
+  initRealtime();
   showScreen('screen-app');
 
   /* Recargar datos frescos al entrar */
@@ -362,7 +438,7 @@ initRealtime();
     dbLoadUsers(),
     dbLoadLog(),
     dbLoadActions()
-  ]).then(function(results) {
+  ]).then(function (results) {
     invData      = results[0];
     contData     = results[1];
     users        = results[2];
@@ -375,7 +451,7 @@ initRealtime();
 
 
 /* ══════════════════════════════════════════════════════════════════
-    MODAL DE CONFIRMACIÓN
+   MODAL DE CONFIRMACIÓN
    ══════════════════════════════════════════════════════════════════ */
 var _mRes = null;
 function showModal(title, msg, okLabel, okColor) {
@@ -384,8 +460,8 @@ function showModal(title, msg, okLabel, okColor) {
     document.getElementById('modal-title').textContent = title;
     document.getElementById('modal-msg').textContent   = msg;
     var ok = document.getElementById('modal-ok');
-    ok.textContent   = okLabel  || 'Confirmar';
-    ok.style.background = okColor || 'var(--danger)';
+    ok.textContent      = okLabel  || 'Confirmar';
+    ok.style.background = okColor  || 'var(--danger)';
     document.getElementById('modal-bg').style.display = 'flex';
   });
 }
@@ -394,13 +470,15 @@ function modalResolve(v) {
   if (_mRes) { _mRes(v); _mRes = null; }
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
-    INVENTARIO
+   INVENTARIO
    ══════════════════════════════════════════════════════════════════ */
 function setSort(s) {
   invSort = s;
   ['reciente', 'pin', 'fecha'].forEach(function (k) {
-    var el = document.getElementById('sb-' + k); if (el) el.classList.toggle('active', k === s);
+    var el = document.getElementById('sb-' + k);
+    if (el) el.classList.toggle('active', k === s);
   });
   renderInv();
 }
@@ -408,21 +486,37 @@ function setSort(s) {
 function setFiltroEstado(f) {
   invFiltroEstado = f;
   ['todos', 'pendiente', 'entregado', 'no_entregado'].forEach(function (k) {
-    var el = document.getElementById('fest-' + k); if (el) el.classList.toggle('active', k === f);
+    var el = document.getElementById('fest-' + k);
+    if (el) el.classList.toggle('active', k === f);
   });
   renderInv();
 }
 
 function getSorted(rows) {
   var arr = rows.slice();
-  if (invSort === 'pin') arr.sort(function (a, b) { return String(a.pin).localeCompare(String(b.pin), undefined, { numeric: true }); });
-  else arr.sort(function (a, b) { return b.id - a.id; });
+  if (invSort === 'pin') {
+    arr.sort(function (a, b) { return String(a.pin).localeCompare(String(b.pin), undefined, { numeric: true }); });
+  } else if (invSort === 'fecha') {
+    arr.sort(function (a, b) {
+      var da = parseFechaCO(a.fecha), db = parseFechaCO(b.fecha);
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      return db - da;
+    });
+  } else {
+    /* 'reciente' — por ID descendente */
+    arr.sort(function (a, b) { return b.id - a.id; });
+  }
   return arr;
 }
 
 function getDupGuias() {
   var count = {};
-  invData.forEach(function (r) { count[r.guia.toLowerCase()] = (count[r.guia.toLowerCase()] || 0) + 1; });
+  invData.forEach(function (r) {
+    var key = r.guia.toLowerCase();
+    count[key] = (count[key] || 0) + 1;
+  });
   var dups = {};
   Object.keys(count).forEach(function (k) { if (count[k] > 1) dups[k] = count[k]; });
   return dups;
@@ -456,6 +550,113 @@ async function addInventario() {
   clearInvForm();
 }
 
+async function delInv(id) {
+  if (!isAdmin()) return;
+  var rec = invData.find(function (r) { return r.id === id; }); if (!rec) return;
+  var ok = await showModal('Eliminar guía', '¿Eliminar la guía "' + rec.guia + '"?', 'Eliminar');
+  if (!ok) return;
+  invData = invData.filter(function (r) { return r.id !== id; });
+  await dbDeleteInv(id);
+  await logAction('eliminacion_inv', rec.guia,
+    'Eliminó guía "' + rec.guia + '" | Bodega: ' + rec.bodega + ' | PIN: ' + rec.pin);
+  renderInv(); renderDash();
+}
+
+function estadoLabel(e) {
+  if (e === 'entregado')    return '<button class="estado-btn estado-entregado"    onclick="toggleEstado(ID)">✓ Entregado</button>';
+  if (e === 'no_entregado') return '<button class="estado-btn estado-no-entregado" onclick="toggleEstado(ID)">✕ No entregado</button>';
+  return '<button class="estado-btn estado-pendiente" onclick="toggleEstado(ID)">○ Pendiente</button>';
+}
+
+function renderInv() {
+  var dups     = getDupGuias();
+  var dupCount = Object.keys(dups).length;
+  var alertEl  = document.getElementById('dup-alert');
+  if (dupCount > 0) {
+    var totalDupItems = Object.values(dups).reduce(function (a, b) { return a + b; }, 0);
+    alertEl.style.display = 'block';
+    alertEl.textContent = '⚠ Se detectaron ' + dupCount + ' guía' + (dupCount !== 1 ? 's' : '') +
+      ' duplicada' + (dupCount !== 1 ? 's' : '') + ' (' + totalDupItems + ' registros en total).';
+  } else {
+    alertEl.style.display = 'none';
+  }
+
+  var q    = (document.getElementById('inv-search').value || '').toLowerCase();
+  var rows = getSorted(invData.filter(function (r) {
+    var matchQ = !q || r.guia.toLowerCase().includes(q) || r.bodega.toLowerCase().includes(q) || r.pin.toLowerCase().includes(q);
+    var matchE = invFiltroEstado === 'todos' || (r.estado || 'pendiente') === invFiltroEstado;
+    return matchQ && matchE;
+  }));
+
+  var tb = document.getElementById('inv-body');
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="empty">Sin registros</td></tr>'; return; }
+  tb.innerHTML = rows.map(function (r, i) {
+    var estado   = r.estado || 'pendiente';
+    var isDup    = dups[r.guia.toLowerCase()] > 1;
+    var dupTag   = isDup ? '<span class="tag-dup">Duplicada</span>' : '';
+    var rowClass = isDup ? 'row-dup' : (estado === 'entregado' ? 'row-entg' : (estado === 'no_entregado' ? 'row-noentg' : ''));
+    var del      = isAdmin() ? '<button class="btn-del" onclick="delInv(' + r.id + ')">✕</button>' : '';
+    var editBtn  = isAdmin() ? '<button class="btn-ghost" style="padding:3px 9px;font-size:12px" onclick="openEditInv(' + r.id + ')">✎</button>' : '';
+    var estBtn   = estadoLabel(estado).replace('ID', r.id);
+    var bodegaTxt = r.bodega === '—' ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : r.bodega;
+    var pinTxt    = r.pin === '—'   ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : '<span style="font-weight:600;font-family:monospace">' + r.pin + '</span>';
+    return '<tr class="' + rowClass + '">'
+      + '<td class="inv-th-num" style="font-size:12px;text-align:center">' + (i + 1) + '</td>'
+      + '<td class="inv-td-guia"><span class="tag">' + r.guia + '</span>' + dupTag + '</td>'
+      + '<td class="inv-td-bodega">' + bodegaTxt + '</td>'
+      + '<td class="inv-td-pin">' + pinTxt + '</td>'
+      + '<td class="inv-td-estado">' + estBtn + '</td>'
+      + '<td style="font-size:11px;color:var(--text2);white-space:nowrap">' + r.fecha + '</td>'
+      + '<td style="display:flex;gap:4px;align-items:center">' + editBtn + del + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+/* ── Editar Inventario ───────────────────────────────────────── */
+var _editInvId = null;
+function openEditInv(id) {
+  if (!isAdmin()) return;
+  var r = invData.find(function (x) { return x.id === id; }); if (!r) return;
+  _editInvId = id;
+  document.getElementById('ei-guia').value   = r.guia;
+  document.getElementById('ei-bodega').value = r.bodega === '—' ? '' : r.bodega;
+  document.getElementById('ei-pin').value    = r.pin === '—' ? '' : r.pin;
+  document.getElementById('ei-err').style.display = 'none';
+  document.getElementById('edit-inv-bg').style.display = 'flex';
+  setTimeout(function () { document.getElementById('ei-guia').focus(); }, 80);
+}
+function closeEditInv() { document.getElementById('edit-inv-bg').style.display = 'none'; _editInvId = null; }
+
+async function confirmEditInv() {
+  var g     = document.getElementById('ei-guia').value.trim();
+  var b     = document.getElementById('ei-bodega').value.trim();
+  var p     = document.getElementById('ei-pin').value.trim();
+  var errEl = document.getElementById('ei-err');
+  if (!g) { errEl.textContent = 'La guía es obligatoria.'; errEl.style.display = 'block'; return; }
+  var r = invData.find(function (x) { return x.id === _editInvId; }); if (!r) return;
+  var old = Object.assign({}, r);
+  r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
+  await dbUpdateInv(r);
+  await logAction('edicion_inv', r.guia,
+    'Editó guía: "' + old.guia + '" → "' + r.guia + '" | Bodega: "' + old.bodega + '" → "' + r.bodega + '" | PIN: "' + old.pin + '" → "' + r.pin + '"');
+  closeEditInv(); renderInv();
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+   CONTABILIDAD
+   ══════════════════════════════════════════════════════════════════ */
+function calcTotals() {
+  var m = 0, b = 0;
+  document.querySelectorAll('.denom').forEach(function (inp) {
+    var q = parseInt(inp.value) || 0, v = parseInt(inp.dataset.val);
+    if (inp.dataset.tipo === 'M') m += q * v; else b += q * v;
+  });
+  document.getElementById('tot-m').textContent     = fmt(m);
+  document.getElementById('tot-b').textContent     = fmt(b);
+  document.getElementById('tot-total').textContent = fmt(m + b);
+}
+
 async function addContabilidad() {
   var fecha  = document.getElementById('c-fecha').value;
   var equipo = document.getElementById('c-equipo').value.trim();
@@ -480,115 +681,6 @@ async function addContabilidad() {
     return;
   }
   clearContForm();
-}
-
-function estadoLabel(e) {
-  if (e === 'entregado')    return '<button class="estado-btn estado-entregado"    onclick="toggleEstado(ID)">✓ Entregado</button>';
-  if (e === 'no_entregado') return '<button class="estado-btn estado-no-entregado" onclick="toggleEstado(ID)">✕ No entregado</button>';
-  return '<button class="estado-btn estado-pendiente" onclick="toggleEstado(ID)">○ Pendiente</button>';
-}
-
-function renderInv() {
-  var dups     = getDupGuias();
-  var dupCount = Object.keys(dups).length;
-  var alertEl  = document.getElementById('dup-alert');
-  if (dupCount > 0) {
-    var totalDupItems = Object.values(dups).reduce(function (a, b) { return a + b; }, 0);
-    alertEl.style.display = 'block';
-    alertEl.textContent = '⚠ Se detectaron ' + dupCount + ' guía' + (dupCount !== 1 ? 's' : '') +
-      ' duplicada' + (dupCount !== 1 ? 's' : '') + ' (' + totalDupItems + ' registros en total).';
-  } else { alertEl.style.display = 'none'; }
-
-  var q    = (document.getElementById('inv-search').value || '').toLowerCase();
-  var rows = getSorted(invData.filter(function (r) {
-    var matchQ = !q || r.guia.toLowerCase().includes(q) || r.bodega.toLowerCase().includes(q) || r.pin.toLowerCase().includes(q);
-    var matchE = invFiltroEstado === 'todos' || (r.estado || 'pendiente') === invFiltroEstado;
-    return matchQ && matchE;
-  }));
-
-  var tb = document.getElementById('inv-body');
-  if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="empty">Sin registros</td></tr>'; return; }
-  tb.innerHTML = rows.map(function (r, i) {
-    var estado  = r.estado || 'pendiente';
-    var isDup   = dups[r.guia.toLowerCase()] > 1;
-    var dupTag  = isDup ? '<span class="tag-dup">Duplicada</span>' : '';
-    var rowClass = isDup ? 'row-dup' : (estado === 'entregado' ? 'row-entg' : (estado === 'no_entregado' ? 'row-noentg' : ''));
-    var del     = isAdmin() ? '<button class="btn-del" onclick="delInv(' + r.id + ')">✕</button>' : '';
-    var editBtn = isAdmin() ? '<button class="btn-ghost" style="padding:3px 9px;font-size:12px" onclick="openEditInv(' + r.id + ')">✎</button>' : '';
-    var estBtn  = estadoLabel(estado).replace('ID', r.id);
-    var bodegaTxt = r.bodega === '—' ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : r.bodega;
-    var pinTxt    = r.pin === '—'   ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : '<span style="font-weight:600;font-family:monospace">' + r.pin + '</span>';
-    return '<tr class="' + rowClass + '">'
-      + '<td class="inv-th-num" style="font-size:12px;text-align:center">' + (i + 1) + '</td>'
-      + '<td class="inv-td-guia"><span class="tag">' + r.guia + '</span>' + dupTag + '</td>'
-      + '<td class="inv-td-bodega">' + bodegaTxt + '</td>'
-      + '<td class="inv-td-pin">' + pinTxt + '</td>'
-      + '<td class="inv-td-estado">' + estBtn + '</td>'
-      + '<td style="font-size:11px;color:var(--text2);white-space:nowrap">' + r.fecha + '</td>'
-      + '<td style="display:flex;gap:4px;align-items:center">' + editBtn + del + '</td>'
-      + '</tr>';
-  }).join('');
-}
-
-/* ── Editar Inventario ───────────────────────────────────────── */
-var _editInvId = null;
-function openEditInv(id) {
-  if (!isAdmin()) return;
-  var r = invData.find(function (x) { return x.id === id; }); if (!r) return;
-  _editInvId = id;
-  document.getElementById('ei-guia').value  = r.guia;
-  document.getElementById('ei-bodega').value = r.bodega === '—' ? '' : r.bodega;
-  document.getElementById('ei-pin').value   = r.pin === '—' ? '' : r.pin;
-  document.getElementById('ei-err').style.display = 'none';
-  document.getElementById('edit-inv-bg').style.display = 'flex';
-  setTimeout(function () { document.getElementById('ei-guia').focus(); }, 80);
-}
-function closeEditInv() { document.getElementById('edit-inv-bg').style.display = 'none'; _editInvId = null; }
-
-async function confirmEditInv() {
-  var g    = document.getElementById('ei-guia').value.trim();
-  var b    = document.getElementById('ei-bodega').value.trim();
-  var p    = document.getElementById('ei-pin').value.trim();
-  var errEl = document.getElementById('ei-err');
-  if (!g) { errEl.textContent = 'La guía es obligatoria.'; errEl.style.display = 'block'; return; }
-  var r = invData.find(function (x) { return x.id === _editInvId; }); if (!r) return;
-  var old = Object.assign({}, r);
-  r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
-  await dbUpdateInv(r);
-  await logAction('edicion_inv', r.guia,
-    'Editó guía: "' + old.guia + '" → "' + r.guia + '" | Bodega: "' + old.bodega + '" → "' + r.bodega + '" | PIN: "' + old.pin + '" → "' + r.pin + '"');
-  closeEditInv(); renderInv();
-}
-
-/* ══════════════════════════════════════════════════════════════════
-    CONTABILIDAD
-   ══════════════════════════════════════════════════════════════════ */
-function calcTotals() {
-  var m = 0, b = 0;
-  document.querySelectorAll('.denom').forEach(function (inp) {
-    var q = parseInt(inp.value) || 0, v = parseInt(inp.dataset.val);
-    if (inp.dataset.tipo === 'M') m += q * v; else b += q * v;
-  });
-  document.getElementById('tot-m').textContent     = fmt(m);
-  document.getElementById('tot-b').textContent     = fmt(b);
-  document.getElementById('tot-total').textContent = fmt(m + b);
-}
-
-async function addContabilidad() {
-  var fecha  = document.getElementById('c-fecha').value;
-  var equipo = document.getElementById('c-equipo').value.trim();
-  if (!fecha || !equipo) { alert('Completa fecha y equipo.'); return; }
-  var m = 0, b = 0, denoms = {};
-  document.querySelectorAll('.denom').forEach(function (inp) {
-    var q = parseInt(inp.value) || 0, v = parseInt(inp.dataset.val);
-    var key = inp.dataset.tipo + v; if (q > 0) denoms[key] = q;
-    if (inp.dataset.tipo === 'M') m += q * v; else b += q * v;
-  });
-  if (m + b === 0) { alert('Ingresa al menos una denominación.'); return; }
-  var item = { id: Date.now(), fecha: new Date(fecha).toLocaleString('es-CO'), equipo: equipo, valorM: m, valorB: b, total: m + b, denoms: denoms };
-  contData.unshift(item);
-  await dbInsertCont(item);
-  renderCont(); clearContForm();
 }
 
 async function delCont(id) {
@@ -646,7 +738,8 @@ function openEditCont(id) {
   document.querySelectorAll('.ec-denom').forEach(function (inp) { inp.value = ''; });
   if (r.denoms) {
     document.querySelectorAll('.ec-denom').forEach(function (inp) {
-      var key = inp.dataset.tipo + inp.dataset.val; if (r.denoms[key]) inp.value = r.denoms[key];
+      var key = inp.dataset.tipo + inp.dataset.val;
+      if (r.denoms[key]) inp.value = r.denoms[key];
     });
   }
   calcEditTotals();
@@ -678,8 +771,9 @@ async function confirmEditCont() {
   closeEditCont(); renderCont();
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
-    DASHBOARD
+   DASHBOARD
    ══════════════════════════════════════════════════════════════════ */
 function renderDash() {
   var tM  = contData.reduce(function (a, r) { return a + r.valorM; }, 0);
@@ -716,8 +810,9 @@ function renderDash() {
   }).join('') : '<div class="dash-empty">Sin registros</div>';
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
-    ADMIN — USUARIOS
+   ADMIN — USUARIOS
    ══════════════════════════════════════════════════════════════════ */
 async function addUser() {
   if (!isSuperAdmin()) { alert('Solo el superadmin puede agregar usuarios.'); return; }
@@ -732,7 +827,6 @@ async function addUser() {
 
   err.style.display = 'none';
 
-  /* Crear usuario con hash bcrypt en el servidor */
   var dbError = await dbCreateUser(u, p, 'operario');
   if (dbError) {
     err.textContent = 'Error al crear usuario: ' + (dbError.message || dbError);
@@ -740,7 +834,6 @@ async function addUser() {
     return;
   }
 
-  /* No se guarda la contraseña en memoria */
   users.push({ username: u, role: 'operario' });
   await logAction('creacion_usuario', u, 'Creó el usuario "' + u + '" con rol: operario');
   renderUList();
@@ -860,12 +953,10 @@ async function confirmEdit() {
 
   var changes = [];
 
-  /* Cambiar nombre de usuario */
   if (newName !== oldName) {
     var { error: nameErr } = await _sb.from('users').update({ username: newName }).eq('username', oldName);
     if (nameErr) { errEl.textContent = 'Error al cambiar nombre: ' + nameErr.message; errEl.style.display = 'block'; return; }
     u.username = newName;
-    /* Actualizar referencias locales en memoria */
     sessionLog.forEach(function (s) { if (s.user === oldName) s.user = newName; });
     adminActions.forEach(function (a) {
       if (a.by === oldName)       a.by       = newName;
@@ -880,7 +971,6 @@ async function confirmEdit() {
     }
   }
 
-  /* Cambiar contraseña via RPC (hash bcrypt en servidor) */
   if (newPass) {
     var pwErr = await dbChangePassword(newName || oldName, newPass);
     if (pwErr) { errEl.textContent = 'Error al cambiar contraseña: ' + pwErr.message; errEl.style.display = 'block'; return; }
@@ -894,8 +984,9 @@ async function confirmEdit() {
   alert('Usuario actualizado: ' + changes.join(', ') + '.');
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
-    ADMIN — SESIONES Y ACCIONES
+   ADMIN — SESIONES Y ACCIONES
    ══════════════════════════════════════════════════════════════════ */
 function clearLog()      { /* Deshabilitado — auditoría permanente */ }
 function clearAcciones() { /* Deshabilitado — auditoría permanente */ }
@@ -906,9 +997,9 @@ function duracion(a, b) {
 }
 
 function renderLog() {
-  var q  = (document.getElementById('log-search').value || '').toLowerCase();
+  var q    = (document.getElementById('log-search').value || '').toLowerCase();
   var rows = sessionLog.filter(function (r) { return !q || r.user.toLowerCase().includes(q); });
-  var tb = document.getElementById('log-body');
+  var tb   = document.getElementById('log-body');
   if (!rows.length) { tb.innerHTML = '<tr><td colspan="5" class="empty">Sin registros</td></tr>'; return; }
   tb.innerHTML = rows.map(function (r) {
     var activo = !r.salida;
@@ -951,8 +1042,9 @@ function renderAcciones() {
   }).join('');
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
-    EXPORTAR EXCEL CON RANGO DE FECHAS
+   EXPORTAR EXCEL CON RANGO DE FECHAS
    ══════════════════════════════════════════════════════════════════ */
 function closeExportModal() {
   var bg = document.getElementById('export-bg');
@@ -1082,51 +1174,49 @@ function doExportExcel() {
   var invFiltrado  = filtrarPorFecha(invData,  desde, hasta);
   var contFiltrado = filtrarPorFecha(contData, desde, hasta);
   var rango        = (desdeStr || 'inicio') + '_a_' + (hastaStr || 'hoy');
-  var CUR = '"$"#,##0';
+  var CUR          = '"$"#,##0';
   var wb           = XLSX.utils.book_new();
 
   /* Hoja Inventario */
   var invRows = invFiltrado.map(function (r, i) {
-    return { '#': i+1, 'Guia': r.guia, 'N Bodega': r.bodega, 'PIN': r.pin, 'Estado': r.estado || 'pendiente', 'Fecha': r.fecha };
+    return { '#': i + 1, 'Guia': r.guia, 'N Bodega': r.bodega, 'PIN': r.pin, 'Estado': r.estado || 'pendiente', 'Fecha': r.fecha };
   });
   var wsInv = XLSX.utils.json_to_sheet(
     invRows.length ? invRows : [{ '#': '', 'Guia': 'Sin registros', 'N Bodega': '', 'PIN': '', 'Estado': '', 'Fecha': '' }]
   );
-  wsInv['!cols'] = [{ wch:5 },{ wch:18 },{ wch:14 },{ wch:12 },{ wch:14 },{ wch:22 }];
+  wsInv['!cols'] = [{ wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 22 }];
   XLSX.utils.book_append_sheet(wb, wsInv, 'Inventario');
 
   /* Hoja Contabilidad */
   var contRows = contFiltrado.map(function (r, i) {
-    return { '#': i+1, 'Fecha Hora': r.fecha, 'Equipo': r.equipo, 'Valor Moneda': r.valorM, 'Valor Billete': r.valorB, 'Total': r.total };
+    return { '#': i + 1, 'Fecha Hora': r.fecha, 'Equipo': r.equipo, 'Valor Moneda': r.valorM, 'Valor Billete': r.valorB, 'Total': r.total };
   });
   var wsCont = XLSX.utils.json_to_sheet(
     contRows.length ? contRows : [{ '#': '', 'Fecha Hora': 'Sin registros', 'Equipo': '', 'Valor Moneda': 0, 'Valor Billete': 0, 'Total': 0 }]
   );
-  wsCont['!cols'] = [{ wch:5 },{ wch:22 },{ wch:16 },{ wch:16 },{ wch:16 },{ wch:16 }];
+  wsCont['!cols'] = [{ wch: 5 }, { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }];
   var nRows = (contRows.length || 1) + 1;
   for (var row = 2; row <= nRows; row++) {
-    ['D','E','F'].forEach(function (col) {
+    ['D', 'E', 'F'].forEach(function (col) {
       var ref = col + row;
       if (wsCont[ref]) { wsCont[ref].t = 'n'; wsCont[ref].z = CUR; }
     });
   }
   XLSX.utils.book_append_sheet(wb, wsCont, 'Contabilidad');
 
-/* Hoja Resumen */
+  /* Hoja Resumen */
   var totalCont = contFiltrado.reduce(function (a, r) { return a + r.total; }, 0);
   var resData = [
     { 'Campo': 'Rango',               'Valor': (desdeStr || 'Todos') + ' → ' + (hastaStr || 'Todos') },
     { 'Campo': 'Total guías',         'Valor': invFiltrado.length },
-    { 'Campo': 'Entregadas',          'Valor': invFiltrado.filter(function(r){ return r.estado==='entregado'; }).length },
-    { 'Campo': 'Pendientes',          'Valor': invFiltrado.filter(function(r){ return (r.estado||'pendiente')==='pendiente'; }).length },
-    { 'Campo': 'No entregadas',       'Valor': invFiltrado.filter(function(r){ return r.estado==='no_entregado'; }).length },
+    { 'Campo': 'Entregadas',          'Valor': invFiltrado.filter(function (r) { return r.estado === 'entregado'; }).length },
+    { 'Campo': 'Pendientes',          'Valor': invFiltrado.filter(function (r) { return (r.estado || 'pendiente') === 'pendiente'; }).length },
+    { 'Campo': 'No entregadas',       'Valor': invFiltrado.filter(function (r) { return r.estado === 'no_entregado'; }).length },
     { 'Campo': 'Registros contables', 'Valor': contFiltrado.length },
     { 'Campo': 'Total recaudado',     'Valor': totalCont }
   ];
   var wsRes = XLSX.utils.json_to_sheet(resData);
-  wsRes['!cols'] = [{ wch:22 },{ wch:20 }];
-
-  /* Forzar tipo numérico y formato moneda en todas las filas con número */
+  wsRes['!cols'] = [{ wch: 22 }, { wch: 20 }];
   for (var ri = 2; ri <= resData.length + 1; ri++) {
     var cellRef = 'B' + ri;
     if (wsRes[cellRef] !== undefined) {
@@ -1136,21 +1226,22 @@ function doExportExcel() {
       }
     }
   }
-
   XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
 
   closeExportModal();
   XLSX.writeFile(wb, 'Coordinadora_' + rango + '.xlsx');
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
-    UTILIDADES DE UI
+   UTILIDADES DE UI
    ══════════════════════════════════════════════════════════════════ */
 function clearInvForm() {
   ['i-guia', 'i-bodega', 'i-pin'].forEach(function (id) {
     var el = document.getElementById(id); if (el) el.value = '';
   });
 }
+
 function clearContForm() {
   var cFecha = document.getElementById('c-fecha'); if (cFecha) cFecha.value = '';
   var cEquipo = document.getElementById('c-equipo'); if (cEquipo) cEquipo.value = '';
@@ -1160,11 +1251,13 @@ function clearContForm() {
 
 function togglePw(id, btn) {
   var inp = document.getElementById(id); if (!inp) return;
-  var showing = inp.type === 'text'; inp.type = showing ? 'password' : 'text';
+  var showing = inp.type === 'text';
+  inp.type = showing ? 'password' : 'text';
   btn.innerHTML = showing
     ? '<svg viewBox="0 0 24 24"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/></svg>'
     : '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
 }
+
 
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
 loadAll();
