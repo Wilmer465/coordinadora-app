@@ -296,7 +296,12 @@ function switchAdminTab(t) {
     document.getElementById('apanel-' + k).style.display = k === t ? '' : 'none';
     document.getElementById('atab-' + k[0]).classList.toggle('active', k === t);
   });
-  if (t === 'usuarios') renderUList();
+  if (t === 'usuarios') {
+    /* Recargar usuarios frescos cada vez que se abre la pestaña */
+    _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole })
+      .then(function() { return dbLoadUsers(); })
+      .then(function(data) { users = data; renderUList(); });
+  }
   if (t === 'sesiones') renderLog();
   if (t === 'acciones') renderAcciones();
 }
