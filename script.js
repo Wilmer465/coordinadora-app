@@ -1297,34 +1297,5 @@ function togglePw(id, btn) {
     : '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
 }
 
-
-/* ── Auto-agregar guía al escanear código de barras ─────────────────────────────────────── */
-var _scanTimer = null;
-function autoAddGuia(input) {
-  /* Recortar siempre a 12 caracteres */
-  if (input.value.length > 12) {
-    input.value = input.value.slice(0, 12);
-  }
-
-  var val = input.value;
-
-  /* Caso 1: el escáner añadió un Enter (\n o \r) al final */
-  if (val.includes('\n') || val.includes('\r')) {
-    input.value = val.replace(/[\r\n]/g, '').trim().slice(0, 12);
-    if (input.value) { clearTimeout(_scanTimer); addInventario(); }
-    return;
-  }
-
-  /* Caso 2: debounce de 120 ms */
-  clearTimeout(_scanTimer);
-  if (!val.trim()) return;
-  _scanTimer = setTimeout(function () {
-    if (input.value.trim() === val.trim() && val.trim().length >= 4) {
-      addInventario();
-    }
-  }, 120);
-}
-
-
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
 loadAll();
