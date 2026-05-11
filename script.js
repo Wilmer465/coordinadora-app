@@ -1328,5 +1328,37 @@ function autoAddGuia(input) {
   }, 120);
 }
 
+/* ── Funciones de carga desde Supabase ── */
+
+async function dbLoadInv() {
+  const { data, error } = await supabase.from('inventario').select('*');
+  if (error) throw error;
+  return data;
+}
+
+async function dbLoadCont() {
+  const { data, error } = await supabase.from('contactos').select('*');
+  if (error) throw error;
+  return data;
+}
+
+async function dbLoadUsers() {
+  const { data, error } = await supabase.from('users').select('*');
+  if (error) throw error;
+  return data;
+}
+
+async function dbLoadLog() {
+  const { data, error } = await supabase.from('session_log').select('*');
+  if (error) throw error;
+  return data;
+}
+
+async function dbLoadActions() {
+  const { data, error } = await supabase.from('admin_actions').select('*');
+  if (error) throw error;
+  return data;
+}
+
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
 loadAll();
