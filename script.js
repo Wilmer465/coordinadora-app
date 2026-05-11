@@ -76,7 +76,7 @@ function initRealtime() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   SUPABASE — CAPA DE DATOS
+    SUPABASE — CAPA DE DATOS
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── Mappers Supabase ↔ JS ────────────────────────────────────── */
@@ -194,14 +194,14 @@ async function logAction(type, affected, detail) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   SESIÓN DE NAVEGADOR  (localStorage)
+    SESIÓN DE NAVEGADOR  (localStorage)
    ══════════════════════════════════════════════════════════════════ */
 function sessGet(k)    { try { return localStorage.getItem(k);    } catch (e) { return null; } }
 function sessSet(k, v) { try { localStorage.setItem(k, v);        } catch (e) { }             }
 function sessDel(k)    { try { localStorage.removeItem(k);         } catch (e) { }             }
 
 /* ══════════════════════════════════════════════════════════════════
-   INICIO — CARGA GENERAL
+    INICIO — CARGA GENERAL
    ══════════════════════════════════════════════════════════════════ */
 async function loadAll() {
   /* Tema guardado */
@@ -313,7 +313,7 @@ function closeDrawer() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   AUTENTICACIÓN
+    AUTENTICACIÓN
    ══════════════════════════════════════════════════════════════════ */
 async function doLogin() {
   var u   = document.getElementById('l-user').value.trim();
@@ -418,7 +418,7 @@ function enterApp() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   MODAL DE CONFIRMACIÓN
+    MODAL DE CONFIRMACIÓN
    ══════════════════════════════════════════════════════════════════ */
 var _mRes = null;
 function showModal(title, msg, okLabel, okColor) {
@@ -438,7 +438,7 @@ function modalResolve(v) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   INVENTARIO
+    INVENTARIO
    ══════════════════════════════════════════════════════════════════ */
 function setSort(s) {
   invSort = s;
@@ -595,7 +595,7 @@ async function confirmEditInv() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   CONTABILIDAD
+    CONTABILIDAD
    ══════════════════════════════════════════════════════════════════ */
 function calcTotals() {
   var m = 0, b = 0;
@@ -713,7 +713,7 @@ async function confirmEditCont() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   DASHBOARD
+    DASHBOARD
    ══════════════════════════════════════════════════════════════════ */
 function renderDash() {
   var tM  = contData.reduce(function (a, r) { return a + r.valorM; }, 0);
@@ -751,7 +751,7 @@ function renderDash() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   ADMIN — USUARIOS
+    ADMIN — USUARIOS
    ══════════════════════════════════════════════════════════════════ */
 async function addUser() {
   if (!isSuperAdmin()) { alert('Solo el superadmin puede agregar usuarios.'); return; }
@@ -929,7 +929,7 @@ async function confirmEdit() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   ADMIN — SESIONES Y ACCIONES
+    ADMIN — SESIONES Y ACCIONES
    ══════════════════════════════════════════════════════════════════ */
 function clearLog()      { /* Deshabilitado — auditoría permanente */ }
 function clearAcciones() { /* Deshabilitado — auditoría permanente */ }
@@ -986,7 +986,7 @@ function renderAcciones() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   EXPORTAR EXCEL CON RANGO DE FECHAS
+    EXPORTAR EXCEL CON RANGO DE FECHAS
    ══════════════════════════════════════════════════════════════════ */
 function closeExportModal() {
   var bg = document.getElementById('export-bg');
@@ -1142,9 +1142,9 @@ function doExportExcel() {
   }
   XLSX.utils.book_append_sheet(wb, wsCont, 'Contabilidad');
 
-  /* Hoja Resumen */
+/* Hoja Resumen */
   var totalCont = contFiltrado.reduce(function (a, r) { return a + r.total; }, 0);
-  var wsRes = XLSX.utils.json_to_sheet([
+  var resData = [
     { 'Campo': 'Rango',               'Valor': (desdeStr || 'Todos') + ' → ' + (hastaStr || 'Todos') },
     { 'Campo': 'Total guías',         'Valor': invFiltrado.length },
     { 'Campo': 'Entregadas',          'Valor': invFiltrado.filter(function(r){ return r.estado==='entregado'; }).length },
@@ -1152,18 +1152,25 @@ function doExportExcel() {
     { 'Campo': 'No entregadas',       'Valor': invFiltrado.filter(function(r){ return r.estado==='no_entregado'; }).length },
     { 'Campo': 'Registros contables', 'Valor': contFiltrado.length },
     { 'Campo': 'Total recaudado',     'Valor': totalCont }
-  ]);
+  ];
+  var wsRes = XLSX.utils.json_to_sheet(resData);
+  wsRes['!cols'] = [{ wch:22 },{ wch:20 }];
 
-wsRes['!cols'] = [{ wch:22 },{ wch:20 }];
-  if (wsRes['B7']) { wsRes['B7'].t = 'n'; wsRes['B7'].z = '"$"#,##0'; }
+  /* Forzar tipo numérico y formato moneda en todas las filas con número */
+  for (var ri = 2; ri <= resData.length + 1; ri++) {
+    var cellRef = 'B' + ri;
+    if (wsRes[cellRef] !== undefined) {
+      var cellVal = resData[ri - 2].Valor;
+      if (typeof cellVal === 'number') {
+        wsRes[cellRef] = { t: 'n', v: cellVal, z: '"$"#,##0' };
+      }
+    }
+  }
+
   XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
 
-  closeExportModal();
-  XLSX.writeFile(wb, 'Coordinadora_' + rango + '.xlsx');
-}
-
 /* ══════════════════════════════════════════════════════════════════
-   UTILIDADES DE UI
+    UTILIDADES DE UI
    ══════════════════════════════════════════════════════════════════ */
 function clearInvForm() {
   ['i-guia', 'i-bodega', 'i-pin'].forEach(function (id) {
@@ -1186,4 +1193,4 @@ function togglePw(id, btn) {
 }
 
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
-loadAll();
+loadAll();}
