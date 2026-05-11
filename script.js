@@ -262,20 +262,18 @@ async function doLogin() {
     return;
   }
 
-  /* Bloquear botón durante la verificación */
   var btn = document.querySelector('.btn-login');
   if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
 
   try {
-    /* ① Verificación bcrypt en el servidor — contraseña NUNCA viaja en texto plano  */
+    console.log('paso 1: verificando contraseña...');
     var { data: authData, error: authError } = await _sb.rpc('verify_password', {
-      p_username: u,
-      p_password: p
+      p_username: u, p_password: p
     });
+    console.log('paso 1 ok:', JSON.stringify(authData), JSON.stringify(authError));
 
     var authOk   = authData && authData[0] && (authData[0].ok === true || authData[0].ok === 'true');
     var authRole = authData && authData[0] && authData[0].role;
-
     if (authError || !authOk || !authRole) {
       err.style.display = 'block';
       err.textContent = 'Usuario o contraseña incorrectos.';
@@ -283,31 +281,33 @@ async function doLogin() {
     }
 
     var role = authRole;
-
-    /* ② Activar contexto de sesión para RLS */
+    console.log('paso 2: activando sesión RLS, user=' + u + ' role=' + role);
     await _sb.rpc('set_session_user', { p_username: u, p_role: role });
+    console.log('paso 2 ok');
 
-    /* ③ Guardar sesión (sin contraseña) */
     currentUser = u;
     currentRole = role;
     sessSet('sess_v9', u);
     sessSet('role_v9', role);
 
-    err.style.display = 'none';
-
-    /* ④ Registrar ingreso */
-    var entry = { id: Date.now(), user: u, ingreso: nowStr(), ingresoTS: Date.now(), salida: null, salidaTS: null };
+    console.log('paso 3: registrando ingreso...');
+    var entry = { id: null, user: u, ingreso: nowStr(), ingresoTS: Date.now(), salida: null, salidaTS: null };
     sessionLog.unshift(entry);
-    dbInsertLog(entry);
+    await dbInsertLog(entry);
+    console.log('paso 3 ok, entry.id=' + entry.id);
 
+    console.log('paso 4: entrando a la app...');
     enterApp();
 
   } catch (e) {
     err.style.display = 'block';
     err.textContent = 'Error: ' + e.message;
-    console.error('Login error completo:', e);
+    console.error('Login error en:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Iniciar sesión'; }
   }
 }
+
 
 function doLogout() {
   /* Registrar cierre de sesión */
@@ -328,7 +328,7 @@ function doLogout() {
   document.getElementById('login-err').style.display = 'none';
   closeDrawer();
   showScreen('screen-login');
-}
+}a
 
 function enterApp() {
   /* El rol ya está en currentRole (establecido en login o restauración) */
