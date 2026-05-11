@@ -177,15 +177,22 @@ async function dbLoadLog() {
 }
 
 async function dbInsertLog(entry) {
+  /* ingreso_ts se guarda como timestamptz — convertir milisegundos a ISO string */
+  var ingresoISO = entry.ingresoTS ? new Date(entry.ingresoTS).toISOString() : null;
   var { data, error } = await _sb.from('session_log')
-    .insert({ usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: entry.ingresoTS, salida: entry.salida || null, salida_ts: entry.salidaTS || null })
+    .insert({ usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: ingresoISO, salida: null, salida_ts: null })
     .select('id').single();
   if (error) { console.error('Error insertando sesión:', error); return; }
   if (data) entry.id = data.id;
 }
 
 async function dbUpdateLog(id, updates) {
-  var { error } = await _sb.from('session_log').update(updates).eq('id', id);
+  /* Convertir salida_ts de milisegundos a ISO si viene como número */
+  var payload = Object.assign({}, updates);
+  if (typeof payload.salida_ts === 'number') {
+    payload.salida_ts = new Date(payload.salida_ts).toISOString();
+  }
+  var { error } = await _sb.from('session_log').update(payload).eq('id', id);
   if (error) console.error('Error actualizando sesión:', error);
 }
 
@@ -370,7 +377,7 @@ async function doLogin() {
     sessSet('role_v9', role);
 
     console.log('paso 3: registrando ingreso...');
-    var entry = { id: null, user: u, ingreso: nowStr(), ingresoTS: Date.now(), salida: null, salidaTS: null };
+    var entry = { id: null, user: u, ingreso: nowStr(), ingresoTS: Date.now(), salidaTS: null, salida: null };
     sessionLog.unshift(entry);
     await dbInsertLog(entry);
     console.log('paso 3 ok, entry.id=' + entry.id);
@@ -1258,6 +1265,36 @@ function togglePw(id, btn) {
     : '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
 }
 
+
+
+/* ── Auto-agregar guía al escanear código de barras ─────────── */
+/* Los lectores de código de barras envían los caracteres muy rápido
+   y terminan con un salto de línea (Enter). autoAddGuia detecta eso
+   y agrega el registro automáticamente sin necesidad de hacer clic. */
+var _scanTimer = null;
+function autoAddGuia(input) {
+  var val = input.value;
+
+  /* Caso 1: el escáner añadió un Enter (\n o \r) al final */
+  if (val.includes('\n') || val.includes('\r')) {
+    input.value = val.replace(/[\r\n]/g, '').trim();
+    if (input.value) { clearTimeout(_scanTimer); addInventario(); }
+    return;
+  }
+
+  /* Caso 2: debounce de 120 ms — si el input fue muy rápido (escáner)
+     y no hay más teclas en ese intervalo, agregar automáticamente.
+     Un humano escribe más lento, así que esto no se dispara al tipear. */
+  clearTimeout(_scanTimer);
+  if (!val.trim()) return;
+  var t0 = Date.now();
+  _scanTimer = setTimeout(function () {
+    /* Solo auto-agrega si el campo sigue igual (no hubo más input) */
+    if (input.value.trim() === val.trim() && val.trim().length >= 4) {
+      addInventario();
+    }
+  }, 120);
+}
 
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
 loadAll();
