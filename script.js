@@ -15,7 +15,7 @@ var isAdmin      = function () { return currentRole === 'admin' || currentRole =
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 
 /* ══════════════════════════════════════════════════════════════════
-   REALTIME — Sincronización en vivo
+    REALTIME — Sincronización en vivo
    ══════════════════════════════════════════════════════════════════ */
 var _realtimeChannel = null;
 
@@ -75,7 +75,7 @@ function initRealtime() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   SUPABASE — CAPA DE DATOS
+    SUPABASE — CAPA DE DATOS
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── Mappers Supabase ↔ JS ────────────────────────────────────── */
@@ -88,38 +88,25 @@ function logToDb(r)      { return { id: r.id, usuario: r.user, ingreso: r.ingres
 function actionFromDb(r) { return { id: r.id, type: r.type, by: r.by, affected: r.affected, detail: r.detail, fecha: r.fecha }; }
 function actionToDb(r)   { return { id: r.id, type: r.type, by: r.by, affected: r.affected, detail: r.detail, fecha: r.fecha }; }
 
-/* ── Inventario — CRUD ────────────────────────────────────────── */
+// ── Inventario — LOAD ─────────────────────────────────────────
 async function dbLoadInv() {
   var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando inventario:', error); return []; }
   return (data || []).map(invFromDb);
 }
 
-async function dbInsertInv(item) {
-  var { data, error } = await _sb.from('inventario')
-    .insert({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado || 'pendiente', fecha: item.fecha })
-    .select('id').single();
-  if (error) { console.error('Error insertando inventario:', error); return null; }
-  return data ? data.id : null;
-}
-
-async function dbUpdateInv(item) {
-  var { error } = await _sb.from('inventario')
-    .update({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha })
-    .eq('id', item.id);
-  if (error) console.error('Error actualizando inventario:', error);
-}
-
-async function dbDeleteInv(id) {
-  var { error } = await _sb.from('inventario').delete().eq('id', id);
-  if (error) console.error('Error eliminando inventario:', error);
-}
-
-/* ── Contabilidad — CRUD ──────────────────────────────────────── */
+// ── Contabilidad — LOAD ───────────────────────────────────────
 async function dbLoadCont() {
-  const { data, error } = await _sb.from('contabilidad').select('*');
-  if (error) throw error;
-  return data;
+  var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
+  if (error) { console.error('Error cargando contabilidad:', error); return []; }
+  return (data || []).map(contFromDb);
+}
+
+// ── Usuarios — LOAD ───────────────────────────────────────────
+async function dbLoadUsers() {
+  var { data, error } = await _sb.from('users_safe').select('*');
+  if (error) { console.error('Error cargando usuarios:', error); return []; }
+  return data || [];
 }
 
 async function dbInsertCont(item) {
@@ -238,7 +225,7 @@ async function logAction(type, affected, detail) {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   INICIO — CARGA GENERAL
+    INICIO — CARGA GENERAL
    ══════════════════════════════════════════════════════════════════ */
 async function loadAll() {
   /* Tema guardado */
@@ -296,7 +283,7 @@ async function loadAll() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   PANTALLAS / TABS / DRAWER
+    PANTALLAS / TABS / DRAWER
    ══════════════════════════════════════════════════════════════════ */
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('active'); });
@@ -357,7 +344,7 @@ function closeDrawer() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   AUTENTICACIÓN
+    AUTENTICACIÓN
    ══════════════════════════════════════════════════════════════════ */
 async function doLogin() {
   var u   = document.getElementById('l-user').value.trim();
@@ -481,7 +468,7 @@ function enterApp() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   MODAL DE CONFIRMACIÓN
+    MODAL DE CONFIRMACIÓN
    ══════════════════════════════════════════════════════════════════ */
 var _mRes = null;
 function showModal(title, msg, okLabel, okColor) {
@@ -502,7 +489,7 @@ function modalResolve(v) {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   INVENTARIO
+    INVENTARIO
    ══════════════════════════════════════════════════════════════════ */
 function setSort(s) {
   invSort = s;
@@ -674,7 +661,7 @@ async function confirmEditInv() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   CONTABILIDAD
+    CONTABILIDAD
    ══════════════════════════════════════════════════════════════════ */
 function calcTotals() {
   var m = 0, b = 0;
@@ -803,7 +790,7 @@ async function confirmEditCont() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   DASHBOARD
+    DASHBOARD
    ══════════════════════════════════════════════════════════════════ */
 function renderDash() {
   var tM  = contData.reduce(function (a, r) { return a + r.valorM; }, 0);
@@ -842,7 +829,7 @@ function renderDash() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   ADMIN — USUARIOS
+    ADMIN — USUARIOS
    ══════════════════════════════════════════════════════════════════ */
 async function addUser() {
   if (!isSuperAdmin()) { alert('Solo el superadmin puede agregar usuarios.'); return; }
@@ -1025,7 +1012,7 @@ async function confirmEdit() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   ADMIN — SESIONES Y ACCIONES
+    ADMIN — SESIONES Y ACCIONES
    ══════════════════════════════════════════════════════════════════ */
 function clearLog()      { /* Deshabilitado — auditoría permanente */ }
 function clearAcciones() { /* Deshabilitado — auditoría permanente */ }
@@ -1083,7 +1070,7 @@ function renderAcciones() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   EXPORTAR EXCEL CON RANGO DE FECHAS
+    EXPORTAR EXCEL CON RANGO DE FECHAS
    ══════════════════════════════════════════════════════════════════ */
 function closeExportModal() {
   var bg = document.getElementById('export-bg');
@@ -1273,7 +1260,7 @@ function doExportExcel() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   UTILIDADES DE UI
+    UTILIDADES DE UI
    ══════════════════════════════════════════════════════════════════ */
 function clearInvForm() {
   ['i-guia', 'i-bodega', 'i-pin'].forEach(function (id) {
