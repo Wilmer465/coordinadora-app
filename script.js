@@ -90,115 +90,45 @@ function actionFromDb(r) { return { id: r.id, type: r.type, by: r.by, affected: 
 function actionToDb(r)   { return { id: r.id, type: r.type, by: r.by, affected: r.affected, detail: r.detail, fecha: r.fecha }; }
 
 /* ── Inventario ───────────────────────────────────────────────── */
-async function dbLoadInv() {
-  var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
-  if (error) { console.error('Error cargando inventario:', error); return []; }
-  return (data || []).map(invFromDb);
-}
 async function dbInsertInv(item) {
-  var { error } = await _sb.from('inventario').insert(invToDb(item));
-  if (error) console.error('Error insertando inventario:', error);
+  var { data, error } = await _sb.from('inventario')
+    .insert({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado || 'pendiente', fecha: item.fecha })
+    .select('id').single();
+  if (error) { console.error('Error insertando inventario:', error); return null; }
+  return data ? data.id : null;
 }
+
 async function dbUpdateInv(item) {
-  var { error } = await _sb.from('inventario').update(invToDb(item)).eq('id', item.id);
+  var { error } = await _sb.from('inventario')
+    .update({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha })
+    .eq('id', item.id);
   if (error) console.error('Error actualizando inventario:', error);
-}
-async function dbDeleteInv(id) {
-  var { error } = await _sb.from('inventario').delete().eq('id', id);
-  if (error) console.error('Error eliminando inventario:', error);
 }
 
 /* ── Contabilidad ─────────────────────────────────────────────── */
-async function dbLoadCont() {
-  var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
-  if (error) { console.error('Error cargando contabilidad:', error); return []; }
-  return (data || []).map(contFromDb);
-}
 async function dbInsertCont(item) {
-  var { error } = await _sb.from('contabilidad').insert(contToDb(item));
-  if (error) console.error('Error insertando contabilidad:', error);
-}
-async function dbUpdateCont(item) {
-  var { error } = await _sb.from('contabilidad').update(contToDb(item)).eq('id', item.id);
-  if (error) console.error('Error actualizando contabilidad:', error);
-}
-async function dbDeleteCont(id) {
-  var { error } = await _sb.from('contabilidad').delete().eq('id', id);
-  if (error) console.error('Error eliminando contabilidad:', error);
+  var { data, error } = await _sb.from('contabilidad')
+    .insert({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
+    .select('id').single();
+  if (error) { console.error('Error insertando contabilidad:', error); return null; }
+  return data ? data.id : null;
 }
 
-/* ── Usuarios — usa vista segura (sin columna password) ────────
-   ⚠  Para crear / cambiar contraseñas se usan RPCs de servidor.   */
-async function dbLoadUsers() {
-  var { data, error } = await _sb.from('users_safe').select('username, role');
-  if (error) { console.error('Error cargando usuarios:', error); return []; }
-  return data || [];
-}
-async function dbCreateUser(username, password, role) {
-  /* Llama a la función SECURITY DEFINER que hashea con bcrypt */
-  var { error } = await _sb.rpc('create_user', {
-    p_username: username,
-    p_password: password,
-    p_role:     role
-  });
-  return error;
-}
-async function dbUpdateUserMeta(oldUsername, changes) {
-  /* Solo actualiza username y/o role — NUNCA la contraseña */
-  var { error } = await _sb.from('users').update(changes).eq('username', oldUsername);
-  if (error) console.error('Error actualizando usuario:', error);
-}
-async function dbChangePassword(targetUser, newPassword) {
-  /* Delega el hash bcrypt al servidor */
-  var { error } = await _sb.rpc('change_password', {
-    p_target_user:  targetUser,
-    p_new_password: newPassword
-  });
-  return error;
-}
-async function dbDeleteUser(username) {
-  var { error } = await _sb.from('users').delete().eq('username', username);
-  if (error) console.error('Error eliminando usuario:', error);
+async function dbUpdateCont(item) {
+  var { error } = await _sb.from('contabilidad')
+    .update({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
+    .eq('id', item.id);
+  if (error) console.error('Error actualizando contabilidad:', error);
 }
 
 /* ── Sesiones ─────────────────────────────────────────────────── */
-async function dbLoadLog() {
-  var { data, error } = await _sb.from('session_log').select('*').order('id', { ascending: false });
-  if (error) { console.error('Error cargando sesiones:', error); return []; }
-  return (data || []).map(logFromDb);
-}
 async function dbInsertLog(entry) {
-  var { error } = await _sb.from('session_log').insert(logToDb(entry));
-  if (error) console.error('Error insertando sesión:', error);
+  var { data, error } = await _sb.from('session_log')
+    .insert({ usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: entry.ingresoTS, salida: entry.salida || null, salida_ts: entry.salidaTS || null })
+    .select('id').single();
+  if (error) { console.error('Error insertando sesión:', error); return; }
+  if (data) entry.id = data.id;
 }
-async function dbUpdateLog(id, changes) {
-  var { error } = await _sb.from('session_log').update(changes).eq('id', id);
-  if (error) console.error('Error actualizando sesión:', error);
-}
-
-/* ── Acciones de admin ────────────────────────────────────────── */
-async function dbLoadActions() {
-  var { data, error } = await _sb.from('admin_actions').select('*').order('id', { ascending: false });
-  if (error) { console.error('Error cargando acciones:', error); return []; }
-  return (data || []).map(actionFromDb);
-}
-async function dbInsertAction(a) {
-  var { error } = await _sb.from('admin_actions').insert(actionToDb(a));
-  if (error) console.error('Error insertando acción:', error);
-}
-
-async function logAction(type, affected, detail) {
-  var a = { id: Date.now(), type: type, by: currentUser, affected: affected, detail: detail, fecha: nowStr() };
-  adminActions.unshift(a);
-  await dbInsertAction(a);
-}
-
-/* ══════════════════════════════════════════════════════════════════
-    SESIÓN DE NAVEGADOR  (localStorage)
-   ══════════════════════════════════════════════════════════════════ */
-function sessGet(k)    { try { return localStorage.getItem(k);    } catch (e) { return null; } }
-function sessSet(k, v) { try { localStorage.setItem(k, v);        } catch (e) { }             }
-function sessDel(k)    { try { localStorage.removeItem(k);         } catch (e) { }             }
 
 /* ══════════════════════════════════════════════════════════════════
     INICIO — CARGA GENERAL
@@ -506,36 +436,45 @@ async function addInventario() {
   var b = document.getElementById('i-bodega').value.trim();
   var p = document.getElementById('i-pin').value.trim();
   if (!g) { alert('La guía es obligatoria.'); return; }
-  var item = { id: Date.now(), guia: g, bodega: b || '—', pin: p || '—', estado: 'pendiente', fecha: nowStr() };
+  var item = { id: null, guia: g, bodega: b || '—', pin: p || '—', estado: 'pendiente', fecha: nowStr() };
   invData.unshift(item);
-  await dbInsertInv(item);
-  renderInv(); clearInvForm();
-}
-
-async function delInv(id) {
-  if (!isAdmin()) return;
-  var rec = invData.find(function (r) { return r.id === id; }); if (!rec) return;
-  var ok = await showModal('Eliminar guía', '¿Eliminar la guía "' + rec.guia + '" — PIN: ' + rec.pin + '?', 'Eliminar');
-  if (!ok) return;
-  invData = invData.filter(function (r) { return r.id !== id; });
-  await dbDeleteInv(id);
-  await logAction('eliminacion_inv', rec.guia, 'Eliminó guía "' + rec.guia + '" | Bodega: ' + rec.bodega + ' | PIN: ' + rec.pin);
   renderInv();
+  var newId = await dbInsertInv(item);
+  if (newId) {
+    item.id = newId;
+  } else {
+    invData = invData.filter(function (r) { return r !== item; });
+    renderInv();
+    alert('Error al guardar. Intenta de nuevo.');
+    return;
+  }
+  clearInvForm();
 }
 
-function autoAddGuia(inp) {
-  var val = inp.value.replace(/\s/g, '');
-  if (/^\d{16}$/.test(val)) { val = val.slice(1, 13); inp.value = val; }
-  if (/^\d{12}$/.test(val)) {
-    var b = document.getElementById('i-bodega').value.trim();
-    var p = document.getElementById('i-pin').value.trim();
-    var item = { id: Date.now(), guia: val, bodega: b || '—', pin: p || '—', estado: 'pendiente', fecha: nowStr() };
-    invData.unshift(item);
-    dbInsertInv(item);
-    renderInv(); clearInvForm();
-    var si = document.getElementById('inv-search');
-    if (si) { si.value = val; renderInv(); setTimeout(function () { si.value = ''; renderInv(); }, 1800); }
+async function addContabilidad() {
+  var fecha  = document.getElementById('c-fecha').value;
+  var equipo = document.getElementById('c-equipo').value.trim();
+  if (!fecha || !equipo) { alert('Completa fecha y equipo.'); return; }
+  var m = 0, b = 0, denoms = {};
+  document.querySelectorAll('.denom').forEach(function (inp) {
+    var q = parseInt(inp.value) || 0, v = parseInt(inp.dataset.val);
+    var key = inp.dataset.tipo + v; if (q > 0) denoms[key] = q;
+    if (inp.dataset.tipo === 'M') m += q * v; else b += q * v;
+  });
+  if (m + b === 0) { alert('Ingresa al menos una denominación.'); return; }
+  var item = { id: null, fecha: new Date(fecha).toLocaleString('es-CO'), equipo: equipo, valorM: m, valorB: b, total: m + b, denoms: denoms };
+  contData.unshift(item);
+  renderCont();
+  var newId = await dbInsertCont(item);
+  if (newId) {
+    item.id = newId;
+  } else {
+    contData = contData.filter(function (r) { return r !== item; });
+    renderCont();
+    alert('Error al guardar. Intenta de nuevo.');
+    return;
   }
+  clearContForm();
 }
 
 function estadoLabel(e) {
