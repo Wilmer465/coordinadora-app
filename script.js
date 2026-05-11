@@ -117,9 +117,9 @@ async function dbDeleteInv(id) {
 
 /* ── Contabilidad — CRUD ──────────────────────────────────────── */
 async function dbLoadCont() {
-  const { data, error } = await _sb.from('contabilidad').select('*');
-  if (error) throw error;
-  return data;
+  var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
+  if (error) { console.error('Error cargando contabilidad:', error); return []; }
+  return (data || []).map(contFromDb);
 }
 
 async function dbInsertCont(item) {
@@ -144,9 +144,9 @@ async function dbDeleteCont(id) {
 
 /* ── Usuarios — CRUD ──────────────────────────────────────────── */
 async function dbLoadUsers() {
-  const { data, error } = await _sb.from('users_safe').select('*');
-  if (error) throw error;
-  return data;
+  var { data, error } = await _sb.from('users_safe').select('*');
+  if (error) { console.error('Error cargando usuarios:', error); return []; }
+  return data || [];
 }
 
 async function dbCreateUser(username, password, role) {
