@@ -200,20 +200,20 @@ async function dbLoadLog() {
 }
 
 async function dbInsertLog(entry) {
-  /* La columna id no tiene DEFAULT en la BD — se genera en el cliente */
+  /* id y *_ts son bigint en la BD — se envían como número entero (ms) */
   var id = Date.now();
-  var ingresoISO = entry.ingresoTS ? new Date(entry.ingresoTS).toISOString() : null;
   var { error } = await _sb.from('session_log')
-    .insert({ id: id, usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: ingresoISO, salida: null, salida_ts: null });
+    .insert({ id: id, usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: id, salida: null, salida_ts: null });
   if (error) { console.error('Error insertando sesión:', error); return; }
   entry.id = id;
+  entry.ingresoTS = id;
 }
 
 async function dbUpdateLog(id, updates) {
-  /* Convertir salida_ts de milisegundos a ISO si viene como número */
+  /* salida_ts es bigint — asegurarse de que llegue como número, nunca como string ISO */
   var payload = Object.assign({}, updates);
-  if (typeof payload.salida_ts === 'number') {
-    payload.salida_ts = new Date(payload.salida_ts).toISOString();
+  if (payload.salida_ts && typeof payload.salida_ts !== 'number') {
+    payload.salida_ts = Number(payload.salida_ts);
   }
   var { error } = await _sb.from('session_log').update(payload).eq('id', id);
   if (error) console.error('Error actualizando sesión:', error);
