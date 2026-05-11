@@ -1298,7 +1298,7 @@ function togglePw(id, btn) {
 }
 
 
-/* ════ agregar guias automaticmente ════════
+/* ── Auto-agregar guía al escanear código de barras ─────────────────────────────────────── */
 var _scanTimer = null;
 function autoAddGuia(input) {
   /* Recortar siempre a 12 caracteres */
@@ -1324,6 +1324,7 @@ function autoAddGuia(input) {
     }
   }, 120);
 }
+
 
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
 loadAll();
