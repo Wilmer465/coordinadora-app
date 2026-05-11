@@ -1191,7 +1191,7 @@ function doExportExcel() {
   }
 
   XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
-  
+
   closeExportModal();
   XLSX.writeFile(wb, 'Coordinadora_' + rango + '.xlsx');
 }
@@ -1220,4 +1220,4 @@ function togglePw(id, btn) {
 }
 
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
-loadAll();}
+loadAll();
