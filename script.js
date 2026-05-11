@@ -1075,6 +1075,25 @@ function exportExcel() {
   });
 }
 
+function parseFechaCO(str) {
+  if (!str) return null;
+  try {
+    var m = str.match(/(\d+)\/(\d+)\/(\d{4})/);
+    if (!m) return null;
+    return new Date(+m[3], +m[2] - 1, +m[1]);
+  } catch (e) { return null; }
+}
+
+function filtrarPorFecha(arr, desde, hasta) {
+  return arr.filter(function (r) {
+    var d = parseFechaCO(r.fecha);
+    if (!d) return true;
+    if (desde && d < desde) return false;
+    if (hasta && d > hasta) return false;
+    return true;
+  });
+}
+
 function doExportExcel() {
   if (typeof XLSX === 'undefined') {
     alert('La librería XLSX no está cargada en el HTML.');
