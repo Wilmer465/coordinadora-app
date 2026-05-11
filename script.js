@@ -1112,7 +1112,7 @@ function doExportExcel() {
   var invFiltrado  = filtrarPorFecha(invData,  desde, hasta);
   var contFiltrado = filtrarPorFecha(contData, desde, hasta);
   var rango        = (desdeStr || 'inicio') + '_a_' + (hastaStr || 'hoy');
-  var CUR          = '#,##0';
+  var CUR = '"$"#,##0';
   var wb           = XLSX.utils.book_new();
 
   /* Hoja Inventario */
@@ -1153,8 +1153,9 @@ function doExportExcel() {
     { 'Campo': 'Registros contables', 'Valor': contFiltrado.length },
     { 'Campo': 'Total recaudado',     'Valor': totalCont }
   ]);
-  wsRes['!cols'] = [{ wch:22 },{ wch:20 }];
-  if (wsRes['B7']) { wsRes['B7'].t = 'n'; wsRes['B7'].z = CUR; }
+
+wsRes['!cols'] = [{ wch:22 },{ wch:20 }];
+  if (wsRes['B7']) { wsRes['B7'].t = 'n'; wsRes['B7'].z = '"$"#,##0'; }
   XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
 
   closeExportModal();
