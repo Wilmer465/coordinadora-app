@@ -273,13 +273,16 @@ async function doLogin() {
       p_password: p
     });
 
-    if (authError || !authData || !authData[0] || !authData[0].ok) {
+    var authOk   = authData && authData[0] && (authData[0].ok === true || authData[0].ok === 'true');
+    var authRole = authData && authData[0] && authData[0].role;
+
+    if (authError || !authOk || !authRole) {
       err.style.display = 'block';
       err.textContent = 'Usuario o contraseña incorrectos.';
       return;
     }
 
-    var role = authData[0].role;
+    var role = authRole;
 
     /* ② Activar contexto de sesión para RLS */
     await _sb.rpc('set_session_user', { p_username: u, p_role: role });
@@ -301,10 +304,8 @@ async function doLogin() {
 
   } catch (e) {
     err.style.display = 'block';
-    err.textContent = 'Error de conexión. Intenta de nuevo.';
-    console.error('Login error:', e);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Iniciar sesión'; }
+    err.textContent = 'Error: ' + e.message;
+    console.error('Login error completo:', e);
   }
 }
 
