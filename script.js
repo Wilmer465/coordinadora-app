@@ -1303,8 +1303,7 @@ function autoAddGuia(input) {
   /* Limitar a 12 caracteres siempre */
   if (input.value.length > 12) input.value = input.value.slice(0, 12);
 
-  var val = input.value.replace(/[;
-]/g, '').trim();
+  var val = input.value.trim();
   input.value = val;
 
   /* Si ya tiene exactamente 12 dígitos, agregar de inmediato */
