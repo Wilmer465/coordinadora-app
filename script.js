@@ -88,25 +88,38 @@ function logToDb(r)      { return { id: r.id, usuario: r.user, ingreso: r.ingres
 function actionFromDb(r) { return { id: r.id, type: r.type, by: r.by, affected: r.affected, detail: r.detail, fecha: r.fecha }; }
 function actionToDb(r)   { return { id: r.id, type: r.type, by: r.by, affected: r.affected, detail: r.detail, fecha: r.fecha }; }
 
-// ── Inventario — LOAD ─────────────────────────────────────────
+/* ── Inventario — CRUD ────────────────────────────────────────── */
 async function dbLoadInv() {
   var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando inventario:', error); return []; }
   return (data || []).map(invFromDb);
 }
 
-// ── Contabilidad — LOAD ───────────────────────────────────────
-async function dbLoadCont() {
-  var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
-  if (error) { console.error('Error cargando contabilidad:', error); return []; }
-  return (data || []).map(contFromDb);
+async function dbInsertInv(item) {
+  var { data, error } = await _sb.from('inventario')
+    .insert({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado || 'pendiente', fecha: item.fecha })
+    .select('id').single();
+  if (error) { console.error('Error insertando inventario:', error); return null; }
+  return data ? data.id : null;
 }
 
-// ── Usuarios — LOAD ───────────────────────────────────────────
-async function dbLoadUsers() {
-  var { data, error } = await _sb.from('users_safe').select('*');
-  if (error) { console.error('Error cargando usuarios:', error); return []; }
-  return data || [];
+async function dbUpdateInv(item) {
+  var { error } = await _sb.from('inventario')
+    .update({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha })
+    .eq('id', item.id);
+  if (error) console.error('Error actualizando inventario:', error);
+}
+
+async function dbDeleteInv(id) {
+  var { error } = await _sb.from('inventario').delete().eq('id', id);
+  if (error) console.error('Error eliminando inventario:', error);
+}
+
+/* ── Contabilidad — CRUD ──────────────────────────────────────── */
+async function dbLoadCont() {
+  const { data, error } = await _sb.from('contabilidad').select('*');
+  if (error) throw error;
+  return data;
 }
 
 async function dbInsertCont(item) {
