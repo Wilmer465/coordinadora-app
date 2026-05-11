@@ -635,8 +635,8 @@ function renderInv() {
     alertEl.style.display = 'none';
   }
 
-  var el = document.getElementById('inv-search');
-  var q  = (el ? el.value : '').toLowerCase();
+  var invSearch = document.getElementById('inv-search');
+  var q = (invSearch ? invSearch.value : '').toLowerCase();
   var rows = getSorted(invData.filter(function (r) {
     var matchQ = !q || r.guia.toLowerCase().includes(q) || r.bodega.toLowerCase().includes(q) || r.pin.toLowerCase().includes(q);
     var matchE = invFiltroEstado === 'todos' || (r.estado || 'pendiente') === invFiltroEstado;
@@ -682,19 +682,60 @@ function openEditInv(id) {
 }
 function closeEditInv() { document.getElementById('edit-inv-bg').style.display = 'none'; _editInvId = null; }
 
-async function confirmEditInv() {
-  var g     = document.getElementById('ei-guia').value.trim();
-  var b     = document.getElementById('ei-bodega').value.trim();
-  var p     = document.getElementById('ei-pin').value.trim();
-  var errEl = document.getElementById('ei-err');
-  if (!g) { errEl.textContent = 'La guía es obligatoria.'; errEl.style.display = 'block'; return; }
-  var r = invData.find(function (x) { return x.id === _editInvId; }); if (!r) return;
-  var old = Object.assign({}, r);
-  r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
-  await dbUpdateInv(r);
-  await logAction('edicion_inv', r.guia,
-    'Editó guía: "' + old.guia + '" → "' + r.guia + '" | Bodega: "' + old.bodega + '" → "' + r.bodega + '" | PIN: "' + old.pin + '" → "' + r.pin + '"');
-  closeEditInv(); renderInv();
+function renderInv() {
+  var invSearch = document.getElementById('inv-search');
+  var alertEl   = document.getElementById('dup-alert');
+  var tb        = document.getElementById('inv-body');
+
+  // Si los elementos del DOM no existen aún, salir sin error
+  if (!invSearch || !tb) return;
+
+  var dups = getDupGuias();
+  var dupCount = Object.keys(dups).length;
+
+  if (alertEl) {
+    if (dupCount > 0) {
+      var totalDupItems = Object.values(dups).reduce(function (a, b) { return a + b; }, 0);
+      alertEl.style.display = 'block';
+      alertEl.textContent = '⚠ Se detectaron ' + dupCount + ' guía' + (dupCount !== 1 ? 's' : '') +
+        ' duplicada' + (dupCount !== 1 ? 's' : '') + ' (' + totalDupItems + ' registros en total).';
+    } else {
+      alertEl.style.display = 'none';
+    }
+  }
+
+  var q    = (invSearch.value || '').toLowerCase();
+  var rows = invData.slice();
+
+  if (currentSort === 'az')   rows.sort(function (a, b) { return a.guia.localeCompare(b.guia); });
+  if (currentSort === 'za')   rows.sort(function (a, b) { return b.guia.localeCompare(a.guia); });
+  if (currentSort === 'new')  rows.sort(function (a, b) { return new Date(b.fecha) - new Date(a.fecha); });
+
+  rows = rows.filter(function (r) {
+    var matchQ = !q || r.guia.toLowerCase().includes(q) || r.bodega.toLowerCase().includes(q) || r.pin.toLowerCase().includes(q);
+    var matchE = !currentFiltroEstado || (r.estado || 'pendiente') === currentFiltroEstado;
+    return matchQ && matchE;
+  });
+
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="empty">Sin registros</td></tr>'; return; }
+
+  tb.innerHTML = rows.map(function (r, i) {
+    var isDup   = dups[r.guia.toLowerCase()] > 1;
+    var dupTag  = isDup ? '<span class="tag-dup" style="margin-left:4px">Dup</span>' : '';
+    var del     = isAdmin() ? '<button class="btn-ghost btn-danger" style="padding:3px 9px;font-size:12px" onclick="deleteInv(' + r.id + ')">✕</button>' : '';
+    var editBtn = isAdmin() ? '<button class="btn-ghost" style="padding:3px 9px;font-size:12px" onclick="openEditInv(' + r.id + ')">✎</button>' : '';
+    var bodegaTxt = r.bodega === '—' ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : r.bodega;
+    var pinTxt    = r.pin === '—'   ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : '<span style="font-weight:600;font-family:monospace">' + r.pin + '</span>';
+    return '<tr onclick="toggleEstado(' + r.id + ')" style="cursor:pointer">'
+      + '<td class="inv-th-num" style="font-size:12px;text-align:center">' + (i + 1) + '</td>'
+      + '<td class="inv-td-guia"><span class="tag">' + r.guia + '</span>' + dupTag + '</td>'
+      + '<td>' + bodegaTxt + '</td>'
+      + '<td>' + pinTxt + '</td>'
+      + '<td><span class="badge badge-' + (r.estado || 'pendiente') + '">' + (r.estado || 'pendiente') + '</span></td>'
+      + '<td style="font-size:11px;color:var(--text3)">' + r.fecha + '</td>'
+      + '<td style="display:flex;gap:4px;align-items:center">' + editBtn + del + '</td>'
+      + '</tr>';
+  }).join('');
 }
 
 
