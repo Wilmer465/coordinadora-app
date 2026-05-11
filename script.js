@@ -333,6 +333,9 @@ function doLogout() {
 function enterApp() {
   /* El rol ya está en currentRole (establecido en login o restauración) */
   var roleLabel = isSuperAdmin() ? 'Superadmin' : currentRole === 'admin' ? 'Administrador' : 'Operario';
+  function sessGet(k)    { try { return localStorage.getItem(k);    } catch (e) { return null; } }
+  function sessSet(k, v) { try { localStorage.setItem(k, v);        } catch (e) { }             }
+  function sessDel(k)    { try { localStorage.removeItem(k);         } catch (e) { }             }
   document.getElementById('d-av').textContent     = (currentUser || '?').slice(0, 1).toUpperCase();
   document.getElementById('d-name').textContent   = currentUser;
   document.getElementById('d-roletxt').textContent = roleLabel;
