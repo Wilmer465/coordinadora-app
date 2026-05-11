@@ -177,13 +177,13 @@ async function dbLoadLog() {
 }
 
 async function dbInsertLog(entry) {
-  /* ingreso_ts se guarda como timestamptz — convertir milisegundos a ISO string */
+  /* La columna id no tiene DEFAULT en la BD — se genera en el cliente */
+  var id = Date.now();
   var ingresoISO = entry.ingresoTS ? new Date(entry.ingresoTS).toISOString() : null;
-  var { data, error } = await _sb.from('session_log')
-    .insert({ usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: ingresoISO, salida: null, salida_ts: null })
-    .select('id').single();
+  var { error } = await _sb.from('session_log')
+    .insert({ id: id, usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: ingresoISO, salida: null, salida_ts: null });
   if (error) { console.error('Error insertando sesión:', error); return; }
-  if (data) entry.id = data.id;
+  entry.id = id;
 }
 
 async function dbUpdateLog(id, updates) {
@@ -204,13 +204,13 @@ async function dbLoadActions() {
 }
 
 async function logAction(type, affected, detail) {
-  var entry = { id: null, type: type, by: currentUser, affected: affected, detail: detail, fecha: nowStr() };
+  /* La columna id no tiene DEFAULT en la BD — se genera en el cliente */
+  var id = Date.now();
+  var entry = { id: id, type: type, by: currentUser, affected: affected, detail: detail, fecha: nowStr() };
   adminActions.unshift(entry);
-  var { data, error } = await _sb.from('admin_actions')
-    .insert({ type: type, by: currentUser, affected: affected, detail: detail, fecha: entry.fecha })
-    .select('id').single();
+  var { error } = await _sb.from('admin_actions')
+    .insert({ id: id, type: type, by: currentUser, affected: affected, detail: detail, fecha: entry.fecha });
   if (error) { console.error('Error registrando acción:', error); return; }
-  if (data) entry.id = data.id;
 }
 
 
