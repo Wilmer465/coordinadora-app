@@ -155,13 +155,36 @@ async function dbCreateUser(username, password, role) {
 }
 
 async function dbDeleteUser(username) {
-  var { error } = await _sb.from('users').delete().eq('username', username);
-  if (error) console.error('Error eliminando usuario:', error);
+  /* Re-establecer contexto RLS — cada petición REST es una transacción nueva */
+  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
+
+  /* Intentar primero con RPC (si existe delete_user en la BD) */
+  var rpcRes = await _sb.rpc('delete_user', { p_username: username });
+  if (!rpcRes.error) return null;
+
+  /* Fallback: DELETE directo con count para detectar si realmente borró */
+  var { error, count } = await _sb.from('users')
+    .delete({ count: 'exact' })
+    .eq('username', username);
+
+  if (error) {
+    console.error('Error eliminando usuario:', error);
+    return error;
+  }
+  if (count === 0) {
+    var msg = 'La política RLS bloqueó la eliminación. Verifica los permisos en Supabase.';
+    console.warn(msg);
+    return { message: msg };
+  }
+  return null;
 }
 
 async function dbUpdateUserMeta(username, updates) {
+  /* Re-establecer contexto RLS antes de actualizar */
+  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { error } = await _sb.from('users').update(updates).eq('username', username);
   if (error) console.error('Error actualizando usuario:', error);
+  return error || null;
 }
 
 async function dbChangePassword(username, newPassword) {
@@ -859,10 +882,19 @@ async function delUser(u) {
     'Eliminar'
   );
   if (!ok) return;
+  /* Optimistic update en memoria */
   users = users.filter(function (x) { return x.username !== u; });
-  await dbDeleteUser(u);
-  await logAction('eliminacion', u, 'Eliminó al usuario "' + u + '" (rol: ' + (target.role || 'operario') + ')');
   renderUList();
+
+  var dbErr = await dbDeleteUser(u);
+  if (dbErr) {
+    /* Revertir el cambio local si falló en la BD */
+    users.push(target);
+    renderUList();
+    alert('Error al eliminar "' + u + '":\n' + (dbErr.message || dbErr));
+    return;
+  }
+  await logAction('eliminacion', u, 'Eliminó al usuario "' + u + '" (rol: ' + (target.role || 'operario') + ')');
 }
 
 async function changeRole(username, newRole) {
