@@ -1015,7 +1015,8 @@ function closeExportModal() {
   if (bg) bg.remove();
 }
 
-function exportExcel() {
+function exportExcel(e) {
+  if (e) e.preventDefault();
   closeExportModal();
 
   var hoy    = new Date().toISOString().slice(0, 10);
