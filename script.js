@@ -76,7 +76,7 @@ function initRealtime() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   SUPABASE — CAPA DE DATOS
+    SUPABASE — CAPA DE DATOS
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── Mappers Supabase ↔ JS ────────────────────────────────────── */
@@ -194,14 +194,14 @@ async function logAction(type, affected, detail) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   SESIÓN DE NAVEGADOR  (localStorage)
+    SESIÓN DE NAVEGADOR  (localStorage)
    ══════════════════════════════════════════════════════════════════ */
 function sessGet(k)    { try { return localStorage.getItem(k);    } catch (e) { return null; } }
 function sessSet(k, v) { try { localStorage.setItem(k, v);        } catch (e) { }             }
 function sessDel(k)    { try { localStorage.removeItem(k);         } catch (e) { }             }
 
 /* ══════════════════════════════════════════════════════════════════
-   INICIO — CARGA GENERAL
+    INICIO — CARGA GENERAL
    ══════════════════════════════════════════════════════════════════ */
 async function loadAll() {
   /* Tema guardado */
@@ -313,7 +313,7 @@ function closeDrawer() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   AUTENTICACIÓN
+    AUTENTICACIÓN
    ══════════════════════════════════════════════════════════════════ */
 async function doLogin() {
   var u   = document.getElementById('l-user').value.trim();
@@ -412,13 +412,30 @@ function enterApp() {
   var cFecha = document.getElementById('c-fecha');
   if (cFecha) cFecha.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
-  initRealtime();
+initRealtime();
   showScreen('screen-app');
-  showTab('dashboard');
+
+  /* Recargar datos frescos al entrar */
+  Promise.all([
+    dbLoadInv(),
+    dbLoadCont(),
+    dbLoadUsers(),
+    dbLoadLog(),
+    dbLoadActions()
+  ]).then(function(results) {
+    invData      = results[0];
+    contData     = results[1];
+    users        = results[2];
+    sessionLog   = results[3];
+    adminActions = results[4];
+    invData.forEach(function (r) { if (!r.estado) r.estado = 'pendiente'; });
+    showTab('dashboard');
+  });
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
-   MODAL DE CONFIRMACIÓN
+    MODAL DE CONFIRMACIÓN
    ══════════════════════════════════════════════════════════════════ */
 var _mRes = null;
 function showModal(title, msg, okLabel, okColor) {
@@ -438,7 +455,7 @@ function modalResolve(v) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   INVENTARIO
+    INVENTARIO
    ══════════════════════════════════════════════════════════════════ */
 function setSort(s) {
   invSort = s;
@@ -595,7 +612,7 @@ async function confirmEditInv() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   CONTABILIDAD
+    CONTABILIDAD
    ══════════════════════════════════════════════════════════════════ */
 function calcTotals() {
   var m = 0, b = 0;
@@ -713,7 +730,7 @@ async function confirmEditCont() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   DASHBOARD
+    DASHBOARD
    ══════════════════════════════════════════════════════════════════ */
 function renderDash() {
   var tM  = contData.reduce(function (a, r) { return a + r.valorM; }, 0);
@@ -751,7 +768,7 @@ function renderDash() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   ADMIN — USUARIOS
+    ADMIN — USUARIOS
    ══════════════════════════════════════════════════════════════════ */
 async function addUser() {
   if (!isSuperAdmin()) { alert('Solo el superadmin puede agregar usuarios.'); return; }
@@ -929,7 +946,7 @@ async function confirmEdit() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   ADMIN — SESIONES Y ACCIONES
+    ADMIN — SESIONES Y ACCIONES
    ══════════════════════════════════════════════════════════════════ */
 function clearLog()      { /* Deshabilitado — auditoría permanente */ }
 function clearAcciones() { /* Deshabilitado — auditoría permanente */ }
@@ -986,7 +1003,7 @@ function renderAcciones() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   EXPORTAR EXCEL CON RANGO DE FECHAS
+    EXPORTAR EXCEL CON RANGO DE FECHAS
    ══════════════════════════════════════════════════════════════════ */
 function closeExportModal() {
   var bg = document.getElementById('export-bg');
@@ -1170,7 +1187,7 @@ function doExportExcel() {
   XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
 
 /* ══════════════════════════════════════════════════════════════════
-   UTILIDADES DE UI
+    UTILIDADES DE UI
    ══════════════════════════════════════════════════════════════════ */
 function clearInvForm() {
   ['i-guia', 'i-bodega', 'i-pin'].forEach(function (id) {
@@ -1193,4 +1210,4 @@ function togglePw(id, btn) {
 }
 
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
-loadAll();
+loadAll();}
