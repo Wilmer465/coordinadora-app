@@ -624,7 +624,8 @@ function estadoLabel(e) {
 function renderInv() {
   var dups     = getDupGuias();
   var dupCount = Object.keys(dups).length;
-  var alertEl  = document.getElementById('dup-alert');
+  var alertEl = document.getElementById('dup-alert');
+  if (!alertEl) return;
   if (dupCount > 0) {
     var totalDupItems = Object.values(dups).reduce(function (a, b) { return a + b; }, 0);
     alertEl.style.display = 'block';
@@ -634,7 +635,8 @@ function renderInv() {
     alertEl.style.display = 'none';
   }
 
-  var q    = (document.getElementById('inv-search').value || '').toLowerCase();
+  var el = document.getElementById('inv-search');
+  var q  = (el ? el.value : '').toLowerCase();
   var rows = getSorted(invData.filter(function (r) {
     var matchQ = !q || r.guia.toLowerCase().includes(q) || r.bodega.toLowerCase().includes(q) || r.pin.toLowerCase().includes(q);
     var matchE = invFiltroEstado === 'todos' || (r.estado || 'pendiente') === invFiltroEstado;
@@ -1320,35 +1322,23 @@ function togglePw(id, btn) {
     : '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
 }
 
+function autoAddGuia(inp) {
+  var raw = inp.value.replace(/\D/g, '');
 
-
-/* ── Auto-agregar guía al escanear código de barras ─────────── */
-/* Los lectores de código de barras envían los caracteres muy rápido
-   y terminan con un salto de línea (Enter). autoAddGuia detecta eso
-   y agrega el registro automáticamente sin necesidad de hacer clic. */
-var _scanTimer = null;
-function autoAddGuia(input) {
-  var val = input.value;
-
-  /* Caso 1: el escáner añadió un Enter (\n o \r) al final */
-  if (val.includes('\n') || val.includes('\r')) {
-    input.value = val.replace(/[\r\n]/g, '').trim();
-    if (input.value) { clearTimeout(_scanTimer); addInventario(); }
+  if (raw.length === 16) {
+    var guia12 = raw.slice(1, 13);
+    inp.value = guia12;
+    setTimeout(function () { addInventario(); }, 0);
     return;
   }
 
-  /* Caso 2: debounce de 120 ms — si el input fue muy rápido (escáner)
-     y no hay más teclas en ese intervalo, agregar automáticamente.
-     Un humano escribe más lento, así que esto no se dispara al tipear. */
-  clearTimeout(_scanTimer);
-  if (!val.trim()) return;
-  var t0 = Date.now();
-  _scanTimer = setTimeout(function () {
-    /* Solo auto-agrega si el campo sigue igual (no hubo más input) */
-    if (input.value.trim() === val.trim() && val.trim().length >= 4) {
-      addInventario();
-    }
-  }, 120);
+  if (raw.length === 12) {
+    inp.value = raw;
+    setTimeout(function () { addInventario(); }, 0);
+    return;
+  }
+
+  inp.value = raw;
 }
 
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
