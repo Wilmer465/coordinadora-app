@@ -155,14 +155,11 @@ async function dbCreateUser(username, password, role) {
 }
 
 async function dbDeleteUser(username) {
-  /* Re-establecer contexto RLS — cada petición REST es una transacción nueva */
   await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
 
-  /* Intentar primero con RPC (si existe delete_user en la BD) */
   var rpcRes = await _sb.rpc('delete_user', { p_username: username });
   if (!rpcRes.error) return null;
 
-  /* Fallback: DELETE directo con count para detectar si realmente borró */
   var { error, count } = await _sb.from('users')
     .delete({ count: 'exact' })
     .eq('username', username);
@@ -180,14 +177,19 @@ async function dbDeleteUser(username) {
 }
 
 async function dbUpdateUserMeta(username, updates) {
-  /* Re-establecer contexto RLS antes de actualizar */
   await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { error } = await _sb.from('users').update(updates).eq('username', username);
   if (error) console.error('Error actualizando usuario:', error);
   return error || null;
 }
 
+/* ── CAMBIO 1: dbChangePassword bloquea edición entre superadmins ── */
 async function dbChangePassword(username, newPassword) {
+  /* Verificar si el destino es otro superadmin */
+  var targetUser = users.find(function (u) { return u.username === username; });
+  if (targetUser && targetUser.role === 'superadmin' && username !== currentUser) {
+    return { message: 'Un superadmin no puede cambiar la contraseña de otro superadmin.' };
+  }
   var { error } = await _sb.rpc('change_password', { p_username: username, p_password: newPassword });
   return error || null;
 }
@@ -200,7 +202,6 @@ async function dbLoadLog() {
 }
 
 async function dbInsertLog(entry) {
-  /* id y *_ts son bigint en la BD — se envían como número entero (ms) */
   var id = Date.now();
   var { error } = await _sb.from('session_log')
     .insert({ id: id, usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: id, salida: null, salida_ts: null });
@@ -210,7 +211,6 @@ async function dbInsertLog(entry) {
 }
 
 async function dbUpdateLog(id, updates) {
-  /* salida_ts es bigint — asegurarse de que llegue como número, nunca como string ISO */
   var payload = Object.assign({}, updates);
   if (payload.salida_ts && typeof payload.salida_ts !== 'number') {
     payload.salida_ts = Number(payload.salida_ts);
@@ -227,7 +227,6 @@ async function dbLoadActions() {
 }
 
 async function logAction(type, affected, detail) {
-  /* La columna id no tiene DEFAULT en la BD — se genera en el cliente */
   var id = Date.now();
   var entry = { id: id, type: type, by: currentUser, affected: affected, detail: detail, fecha: nowStr() };
   adminActions.unshift(entry);
@@ -241,7 +240,6 @@ async function logAction(type, affected, detail) {
     INICIO — CARGA GENERAL
    ══════════════════════════════════════════════════════════════════ */
 async function loadAll() {
-  /* Tema guardado */
   var th = sessGet('theme_v9');
   if (th === 'dark') {
     isDark = true;
@@ -252,7 +250,6 @@ async function loadAll() {
 
   showScreen('screen-login');
 
-  /* ── Intentar restaurar sesión previa ── */
   var savedUser = sessGet('sess_v9');
   var savedRole = sessGet('role_v9');
 
@@ -269,7 +266,6 @@ async function loadAll() {
     }
   }
 
-  /* ── Cargar datos en paralelo ── */
   var results = await Promise.all([
     dbLoadInv(),
     dbLoadCont(),
@@ -284,7 +280,6 @@ async function loadAll() {
   sessionLog   = results[3];
   adminActions = results[4];
 
-  /* Migrar registros sin estado */
   invData.forEach(function (r) { if (!r.estado) r.estado = 'pendiente'; });
 
   if (currentUser) {
@@ -461,7 +456,6 @@ function enterApp() {
   initRealtime();
   showScreen('screen-app');
 
-  /* Recargar datos frescos al entrar */
   Promise.all([
     dbLoadInv(),
     dbLoadCont(),
@@ -535,7 +529,6 @@ function getSorted(rows) {
       return db - da;
     });
   } else {
-    /* 'reciente' — por ID descendente */
     arr.sort(function (a, b) { return b.id - a.id; });
   }
   return arr;
@@ -882,13 +875,11 @@ async function delUser(u) {
     'Eliminar'
   );
   if (!ok) return;
-  /* Optimistic update en memoria */
   users = users.filter(function (x) { return x.username !== u; });
   renderUList();
 
   var dbErr = await dbDeleteUser(u);
   if (dbErr) {
-    /* Revertir el cambio local si falló en la BD */
     users.push(target);
     renderUList();
     alert('Error al eliminar "' + u + '":\n' + (dbErr.message || dbErr));
@@ -926,7 +917,8 @@ function renderUList() {
     var isMe     = u.username === currentUser;
     var canChangeRole = isSuperAdmin() && !isSA && !isMe;
     var canDelete     = isSuperAdmin() && !isSA && !isMe;
-    var canEdit       = isSuperAdmin() || isMe;
+    /* ── CAMBIO 2: superadmin no puede editar a otro superadmin ── */
+    var canEdit       = isMe || (isSuperAdmin() && !isSA);
 
     var roleCtrl = '';
     if (isSA) {
@@ -960,6 +952,12 @@ function renderUList() {
 var _editTarget = null;
 function openEditModal(username) {
   if (!isSuperAdmin() && username !== currentUser) { alert('Solo el superadmin puede editar otros usuarios.'); return; }
+  /* ── CAMBIO 3: bloquear edición de otro superadmin ── */
+  var targetUser = users.find(function (x) { return x.username === username; });
+  if (targetUser && targetUser.role === 'superadmin' && username !== currentUser) {
+    alert('No puedes editar a otro superadmin.');
+    return;
+  }
   _editTarget = username;
   var isMe = username === currentUser;
   document.getElementById('edit-modal-title').textContent = 'Editar usuario: ' + username + (isMe ? ' (tú)' : '');
@@ -983,6 +981,13 @@ async function confirmEdit() {
   var errEl   = document.getElementById('edit-err');
   var oldName = _editTarget;
   var u = users.find(function (x) { return x.username === oldName; }); if (!u) return;
+
+  /* ── CAMBIO 4: bloquear confirmación si el destino es otro superadmin ── */
+  if (u.role === 'superadmin' && oldName !== currentUser) {
+    errEl.textContent = 'No puedes editar a otro superadmin.';
+    errEl.style.display = 'block';
+    return;
+  }
 
   if (!newName) { errEl.textContent = 'El nombre de usuario no puede estar vacío.'; errEl.style.display = 'block'; return; }
   if (!/^[a-zA-Z0-9_.\-]+$/.test(newName)) { errEl.textContent = 'Solo letras, números, guiones y puntos.'; errEl.style.display = 'block'; return; }
@@ -1216,7 +1221,6 @@ function doExportExcel() {
   var CUR          = '"$"#,##0';
   var wb           = XLSX.utils.book_new();
 
-  /* Hoja Inventario */
   var invRows = invFiltrado.map(function (r, i) {
     return { '#': i + 1, 'Guia': r.guia, 'N Bodega': r.bodega, 'PIN': r.pin, 'Estado': r.estado || 'pendiente', 'Fecha': r.fecha };
   });
@@ -1226,7 +1230,6 @@ function doExportExcel() {
   wsInv['!cols'] = [{ wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 22 }];
   XLSX.utils.book_append_sheet(wb, wsInv, 'Inventario');
 
-  /* Hoja Contabilidad */
   var contRows = contFiltrado.map(function (r, i) {
     return { '#': i + 1, 'Fecha Hora': r.fecha, 'Equipo': r.equipo, 'Valor Moneda': r.valorM, 'Valor Billete': r.valorB, 'Total': r.total };
   });
@@ -1243,7 +1246,6 @@ function doExportExcel() {
   }
   XLSX.utils.book_append_sheet(wb, wsCont, 'Contabilidad');
 
-  /* Hoja Resumen */
   var totalCont = contFiltrado.reduce(function (a, r) { return a + r.total; }, 0);
   var resData = [
     { 'Campo': 'Rango',               'Valor': (desdeStr || 'Todos') + ' → ' + (hastaStr || 'Todos') },
@@ -1305,7 +1307,6 @@ function autoAddGuia(input) {
   var soloDigitos = input.value.replace(/\D/g, '');
   if (!soloDigitos) return;
 
-  /* Esperar 200 ms sin nueva entrada antes de procesar */
   _scanTimer = setTimeout(function () {
     var digitos = input.value.replace(/\D/g, '');
     var len = digitos.length;
@@ -1313,22 +1314,22 @@ function autoAddGuia(input) {
     if (len === 11) {
       input.value = digitos;
       addInventario();
-    } 
+    }
     else if (len === 12) {
-      input.value = digitos.slice(0, -1);        /* elimina dígito de control */
+      input.value = digitos.slice(0, -1);
       addInventario();
     }
     else if (len === 13) {
-      input.value = digitos.slice(1, -1);        /* elimina dígito de control */
+      input.value = digitos.slice(1, -1);
       addInventario();
     } else if (len === 14) {
-      input.value = digitos.slice(1, -2);        /* elimina 1er y último */
+      input.value = digitos.slice(1, -2);
       addInventario();
     } else if (len === 15) {
-      input.value = digitos.slice(1, -3);        /* elimina 1er y 2 últimos */
+      input.value = digitos.slice(1, -3);
       addInventario();
     } else if (len === 16) {
-      input.value = digitos.slice(1, -4);        /* elimina 1er y 3 últimos */
+      input.value = digitos.slice(1, -4);
       addInventario();
     }
   }, 200);
