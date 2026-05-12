@@ -1301,27 +1301,43 @@ function togglePw(id, btn) {
 
 
 
-/* ── Auto-agregar guía al escanear código de barras (12 dígitos) ── */
+/* ── Auto-agregar guía al escanear código de barras ─────────────
+   · 12 dígitos → agrega directamente
+   · 16 dígitos → elimina el 1er dígito y los 3 últimos → agrega
+   ─────────────────────────────────────────────────────────────── */
 var _scanTimer = null;
 function autoAddGuia(input) {
-  /* Limitar a 12 caracteres siempre */
-  if (input.value.length > 12) input.value = input.value.slice(0, 12);
-
   var val = input.value.trim();
+
+  /* Código de 16 dígitos: recortar y agregar */
+  if (/^\d{16}$/.test(val)) {
+    clearTimeout(_scanTimer);
+    input.value = val.slice(1, 13); /* elimina 1er dígito y 3 últimos → 12 dígitos */
+    addInventario();
+    return;
+  }
+
+  /* Limitar a 16 caracteres máximo mientras se escribe */
+  if (input.value.length > 16) input.value = input.value.slice(0, 16);
+  val = input.value.trim();
   input.value = val;
 
-  /* Si ya tiene exactamente 12 dígitos, agregar de inmediato */
-  if (val.length === 12) {
+  /* Código de 12 dígitos: agregar de inmediato */
+  if (/^\d{12}$/.test(val)) {
     clearTimeout(_scanTimer);
     addInventario();
     return;
   }
 
-  /* Debounce 150 ms — por si el escáner no envía todos a la vez */
+  /* Debounce 150 ms — por si el escáner no envía todos los caracteres a la vez */
   clearTimeout(_scanTimer);
   if (!val) return;
   _scanTimer = setTimeout(function () {
-    if (input.value.trim() === val && val.length === 12) {
+    var current = input.value.trim();
+    if (/^\d{16}$/.test(current)) {
+      input.value = current.slice(1, 13);
+      addInventario();
+    } else if (/^\d{12}$/.test(current)) {
       addInventario();
     }
   }, 150);
