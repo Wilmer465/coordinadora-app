@@ -1,4 +1,7 @@
-/* ── CLIENTE SUPABASE ─────────────────────────────────────────── */
+
+
+/* ═════════════ CLIENTE SUPABASE ══════════════════════════ 
+═════════════════════════════════════════════════════════════*/
 const SUPABASE_URL = 'https://llkfdckqovgfguponutg.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_3LLyKJdKoG1ag4bIdDfpQg_IolLFXUQ';
 const _sb = supabase.createClient('https://llkfdckqovgfguponutg.supabase.co', 'sb_publishable_3LLyKJdKoG1ag4bIdDfpQg_IolLFXUQ');
@@ -13,6 +16,7 @@ var fmt    = function (n) { return '$' + Number(n).toLocaleString('es-CO'); };
 var nowStr = function () { return new Date().toLocaleString('es-CO'); };
 var isAdmin      = function () { return currentRole === 'admin' || currentRole === 'superadmin'; };
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
+
 
 /* ══════════════════════════════════════════════════════════════════
     REALTIME — Sincronización en vivo
@@ -1299,7 +1303,9 @@ function togglePw(id, btn) {
     : '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
 }
 
-/* ── Auto-agregar guía al escanear código de barras ─────────────*/
+/* ══════════════════════════════════════════════════════════════════════════
+      AUTO-AGREGAR GUÍA AL ESCANEAR CÓDIGOS DE BARRAS
+══════════════════════════════════════════════════════════════════════════════*/
 var _scanTimer = null;
 function autoAddGuia(input) {
   clearTimeout(_scanTimer);
