@@ -1302,8 +1302,9 @@ function togglePw(id, btn) {
 
 
 /* ── Auto-agregar guía al escanear código de barras ─────────────
-   · 12 dígitos → agrega
-   · 16 dígitos → elimina el 1er dígito y los 3 últimos → agrega
+   · 12 dígitos → agrega tal cual
+   · 13 dígitos → EAN-13: toma los primeros 12 (descarta dígito de control)
+   · 16 dígitos → EAN-13 + sufijo del escáner: toma los primeros 12
    Se usa debounce siempre para evitar doble registro cuando el
    escáner envía los caracteres uno a uno.
    ─────────────────────────────────────────────────────────────── */
@@ -1318,8 +1319,8 @@ function autoAddGuia(input) {
   _scanTimer = setTimeout(function () {
     var digitos = input.value.replace(/\D/g, '');
 
-    if (digitos.length === 16) {
-      input.value = digitos.slice(1, -3); /* elimina 1er dígito y los 3 últimos */
+    if (digitos.length === 16 || digitos.length === 13) {
+      input.value = digitos.slice(0, 12); /* EAN-13: toma los primeros 12 dígitos */
       addInventario();
     } else if (digitos.length === 12) {
       input.value = digitos;
