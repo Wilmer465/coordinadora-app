@@ -1302,37 +1302,24 @@ function togglePw(id, btn) {
 
 
 /* ── Auto-agregar guía al escanear código de barras ─────────────
-   · 12 dígitos → agrega directamente
+   · 12 dígitos → agrega
    · 16 dígitos → elimina el 1er dígito y los 3 últimos → agrega
-   (se extraen solo los dígitos para ignorar caracteres extra del escáner)
+   Se usa debounce siempre para evitar doble registro cuando el
+   escáner envía los caracteres uno a uno.
    ─────────────────────────────────────────────────────────────── */
 var _scanTimer = null;
 function autoAddGuia(input) {
   clearTimeout(_scanTimer);
 
-  /* Extraer solo dígitos (ignora espacios, tabs, enters del escáner) */
   var soloDigitos = input.value.replace(/\D/g, '');
-
-  if (soloDigitos.length === 16) {
-    /* Eliminar 1er dígito y los 3 últimos → quedan 12 */
-    var recortado = soloDigitos.slice(1, -3);
-    input.value = recortado;
-    addInventario();
-    return;
-  }
-
-  if (soloDigitos.length === 12) {
-    input.value = soloDigitos;
-    addInventario();
-    return;
-  }
-
-  /* Debounce 200 ms — por si el escáner envía los caracteres de a poco */
   if (!soloDigitos) return;
+
+  /* Esperar 200 ms sin nueva entrada antes de procesar */
   _scanTimer = setTimeout(function () {
     var digitos = input.value.replace(/\D/g, '');
+
     if (digitos.length === 16) {
-      input.value = digitos.slice(1, -3);
+      input.value = digitos.slice(1, -3); /* elimina 1er dígito y los 3 últimos */
       addInventario();
     } else if (digitos.length === 12) {
       input.value = digitos;
