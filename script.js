@@ -1297,19 +1297,7 @@ function togglePw(id, btn) {
     : '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
 }
 
-
-
-
-
-/* ── Auto-agregar guía al escanear código de barras ─────────────
-   · 12 dígitos → agrega tal cual
-   · 13 dígitos → elimina el último (dígito de control EAN-13)
-   · 14 dígitos → elimina el 1er dígito y el último
-   · 15 dígitos → elimina el 1er dígito y los 2 últimos
-   · 16 dígitos → elimina el 1er dígito y los 3 últimos
-   Se usa debounce siempre para evitar doble registro cuando el
-   escáner envía los caracteres uno a uno.
-   ─────────────────────────────────────────────────────────────── */
+/* ── Auto-agregar guía al escanear código de barras ─────────────*/
 var _scanTimer = null;
 function autoAddGuia(input) {
   clearTimeout(_scanTimer);
@@ -1322,20 +1310,25 @@ function autoAddGuia(input) {
     var digitos = input.value.replace(/\D/g, '');
     var len = digitos.length;
 
-    if (len === 12) {
+    if (len === 11) {
       input.value = digitos;
       addInventario();
-    } else if (len === 13) {
+    } 
+    else if (len === 12) {
       input.value = digitos.slice(0, -1);        /* elimina dígito de control */
       addInventario();
+    }
+    else if (len === 13) {
+      input.value = digitos.slice(1, -1);        /* elimina dígito de control */
+      addInventario();
     } else if (len === 14) {
-      input.value = digitos.slice(1, -1);        /* elimina 1er y último */
+      input.value = digitos.slice(1, -2);        /* elimina 1er y último */
       addInventario();
     } else if (len === 15) {
-      input.value = digitos.slice(1, -2);        /* elimina 1er y 2 últimos */
+      input.value = digitos.slice(1, -3);        /* elimina 1er y 2 últimos */
       addInventario();
     } else if (len === 16) {
-      input.value = digitos.slice(1, -3);        /* elimina 1er y 3 últimos */
+      input.value = digitos.slice(1, -4);        /* elimina 1er y 3 últimos */
       addInventario();
     }
   }, 200);
