@@ -21,61 +21,39 @@ var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 /* ── Broadcast Realtime ──────────────────────────────────────── */
 var _broadcastChannel = null;
 var _pollInterval    = null;
-var _lastInvLoad     = 0;
-var _lastContLoad    = 0;
 
 function initRealtime() {
-  if (_broadcastChannel) return;
+  if (_pollInterval) return;
 
-  /* ── Canal Broadcast: cambios instantáneos entre usuarios ── */
-  _broadcastChannel = _sb.channel('app-sync', {
-    config: { broadcast: { self: false } }
-  })
-  .on('broadcast', { event: 'inv-change' }, function () {
-    dbLoadInv().then(function (data) { invData = data; renderInv(); renderDash(); });
-  })
-  .on('broadcast', { event: 'cont-change' }, function () {
-    dbLoadCont().then(function (data) { contData = data; renderCont(); renderDash(); });
-  })
-  .subscribe(function (status) {
-    console.log('Realtime:', status);
-  });
+  /* Intentar broadcast instantáneo entre usuarios */
+  _broadcastChannel = _sb.channel('app-sync', { config: { broadcast: { self: false } } })
+    .on('broadcast', { event: 'inv-change' }, function () {
+      dbLoadInv().then(function (d) { invData = d; renderInv(); renderDash(); });
+    })
+    .on('broadcast', { event: 'cont-change' }, function () {
+      dbLoadCont().then(function (d) { contData = d; renderCont(); renderDash(); });
+    })
+    .subscribe(function (s) { console.log('Realtime:', s); });
 
-  /* ── Polling de respaldo cada 10 s por si el broadcast falla ── */
+  /* Polling cada 5 s — garantiza que todos ven los cambios */
   _pollInterval = setInterval(function () {
-    if (document.hidden || !currentUser) return;
-    var now = Date.now();
-    /* Solo recargar si han pasado al menos 8 s desde la última carga */
-    if (now - _lastInvLoad > 8000) {
-      dbLoadInv().then(function (data) {
-        _lastInvLoad = Date.now();
-        invData = data;
-        renderInv(); renderDash();
-      });
-    }
-    if (now - _lastContLoad > 8000) {
-      dbLoadCont().then(function (data) {
-        _lastContLoad = Date.now();
-        contData = data;
-        renderCont(); renderDash();
-      });
-    }
-  }, 10000);
+    if (!currentUser) return;
+    Promise.all([ dbLoadInv(), dbLoadCont() ])
+      .then(function (r) {
+        invData  = r[0];
+        contData = r[1];
+        renderInv();
+        renderCont();
+        renderDash();
+      })
+      .catch(function (e) { console.warn('Poll error:', e); });
+  }, 5000);
+
+  console.log('Sync activo');
 }
 
-function broadcastInv() {
-  _lastInvLoad = Date.now(); /* evitar que el polling recargue justo después de un cambio propio */
-  if (_broadcastChannel) {
-    _broadcastChannel.send({ type: 'broadcast', event: 'inv-change', payload: {} });
-  }
-}
-
-function broadcastCont() {
-  _lastContLoad = Date.now();
-  if (_broadcastChannel) {
-    _broadcastChannel.send({ type: 'broadcast', event: 'cont-change', payload: {} });
-  }
-}
+function broadcastInv()  { if (_broadcastChannel) _broadcastChannel.send({ type: 'broadcast', event: 'inv-change',  payload: {} }); }
+function broadcastCont() { if (_broadcastChannel) _broadcastChannel.send({ type: 'broadcast', event: 'cont-change', payload: {} }); }
 
 function stopRealtime() {
   if (_broadcastChannel) { _sb.removeChannel(_broadcastChannel); _broadcastChannel = null; }
@@ -101,7 +79,6 @@ function actionToDb(r)   { return { id: r.id, type: r.type, by: r.by, affected: 
 
 /* ── Inventario — CRUD ────────────────────────────────────────── */
 async function dbLoadInv() {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando inventario:', error); return []; }
   return (data || []).map(invFromDb);
@@ -129,7 +106,6 @@ async function dbDeleteInv(id) {
 
 /* ── Contabilidad — CRUD ──────────────────────────────────────── */
 async function dbLoadCont() {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando contabilidad:', error); return []; }
   return (data || []).map(contFromDb);
@@ -157,7 +133,6 @@ async function dbDeleteCont(id) {
 
 /* ── Usuarios — CRUD ──────────────────────────────────────────── */
 async function dbLoadUsers() {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('users_safe').select('*');
   if (error) { console.error('Error cargando usuarios:', error); return []; }
   return data || [];
@@ -210,7 +185,6 @@ async function dbChangePassword(username, newPassword) {
 
 /* ── Sesiones — CRUD ──────────────────────────────────────────── */
 async function dbLoadLog() {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('session_log').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando sesiones:', error); return []; }
   return (data || []).map(logFromDb);
@@ -236,7 +210,6 @@ async function dbUpdateLog(id, updates) {
 
 /* ── Acciones Admin — CRUD ────────────────────────────────────── */
 async function dbLoadActions() {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('admin_actions').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando acciones:', error); return []; }
   return (data || []).map(actionFromDb);
