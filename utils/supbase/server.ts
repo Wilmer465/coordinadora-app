@@ -1,8 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.'https://llkfdckqovgfguponutg.supabase.co';
+const supabaseAnonKey = process.env.'sb_publishable_3LLyKJdKoG1ag4bIdDfpQg_IolLFXUQ';
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error(
