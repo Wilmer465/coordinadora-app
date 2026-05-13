@@ -468,7 +468,7 @@ function modalResolve(v) {
    ══════════════════════════════════════════════════════════════════ */
 function setSort(s) {
   invSort = s;
-  ['reciente', 'pin', 'fecha'].forEach(function (k) {
+  ['reciente', 'bodega', 'pin', 'fecha'].forEach(function (k) {
     var el = document.getElementById('sb-' + k);
     if (el) el.classList.toggle('active', k === s);
   });
