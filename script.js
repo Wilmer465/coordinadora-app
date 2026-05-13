@@ -6,7 +6,7 @@ const _sb = supabase.createClient('https://llkfdckqovgfguponutg.supabase.co', 's
 /* ── ESTADO GLOBAL ────────────────────────────────────────────── */
 var invData = [], contData = [], users = [], sessionLog = [], adminActions = [];
 var currentUser = null, currentRole = null;
-var invSort = 'reciente', invFiltroEstado = 'todos', isDark = false;
+var invSort = 'reciente', invFiltroEstado = 'todos', invFiltroBodega = 'todas', isDark = false;
 
 /* ── HELPERS ──────────────────────────────────────────────────── */
 var fmt    = function (n) { return '$' + Number(n).toLocaleString('es-CO'); };
@@ -484,6 +484,36 @@ function setFiltroEstado(f) {
   renderInv();
 }
 
+function setFiltroBodega(b) {
+  invFiltroBodega = b;
+  renderInv();
+}
+
+function renderBodegaFiltros() {
+  var cont = document.getElementById('bodega-filtros');
+  if (!cont) return;
+
+  /* Obtener bodegas únicas ordenadas, ignorando '—' */
+  var bodegas = [];
+  invData.forEach(function (r) {
+    if (r.bodega && r.bodega !== '—' && bodegas.indexOf(r.bodega) === -1) {
+      bodegas.push(r.bodega);
+    }
+  });
+  bodegas.sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); });
+
+  /* Si no hay bodegas, ocultar el contenedor */
+  if (!bodegas.length) { cont.style.display = 'none'; return; }
+  cont.style.display = '';
+
+  var btns = '<button class="sort-btn' + (invFiltroBodega === 'todas' ? ' active' : '') + '" onclick="setFiltroBodega(\'todas\')">Todas</button>';
+  bodegas.forEach(function (bod) {
+    var active = invFiltroBodega === bod ? ' active' : '';
+    btns += '<button class="sort-btn' + active + '" onclick="setFiltroBodega(\'' + bod.replace(/'/g, "\\'") + '\')">' + bod + '</button>';
+  });
+  cont.innerHTML = btns;
+}
+
 function getSorted(rows) {
   var arr = rows.slice();
   if (invSort === 'pin') {
@@ -576,8 +606,11 @@ function renderInv() {
   var rows = getSorted(invData.filter(function (r) {
     var matchQ = !q || r.guia.toLowerCase().includes(q) || r.bodega.toLowerCase().includes(q) || r.pin.toLowerCase().includes(q);
     var matchE = invFiltroEstado === 'todos' || (r.estado || 'pendiente') === invFiltroEstado;
-    return matchQ && matchE;
+    var matchB = invFiltroBodega === 'todas' || r.bodega === invFiltroBodega;
+    return matchQ && matchE && matchB;
   }));
+
+  renderBodegaFiltros();
 
   var tb = document.getElementById('inv-body');
   if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="empty">Sin registros</td></tr>'; return; }
