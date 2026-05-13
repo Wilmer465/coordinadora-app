@@ -18,28 +18,78 @@ var isSuperAdmin = function () { return currentRole === 'superadmin'; };
     REALTIME — Sincronización en vivo
    ══════════════════════════════════════════════════════════════════ */
 
-/* ── Variable de control del sync ────────────────────────────── */
-var _syncInterval = null;
-/* _realtimeChannel eliminado — reemplazado por sync liviano */
+/* ── Canal Realtime de Supabase ──────────────────────────────── */
+var _realtimeChannel = null;
 
 function initRealtime() {
-  if (_syncInterval) return;
-  /* Refrescar datos cada 30 s solo si la pestaña está visible */
-  _syncInterval = setInterval(async function () {
-    if (document.hidden) return;
-    var tabInv  = document.getElementById('tab-inventario');
-    var tabCont = document.getElementById('tab-contabilidad');
-    if (tabInv  && tabInv.style.display  !== 'none') { invData  = await dbLoadInv();  renderInv();  renderDash(); }
-    if (tabCont && tabCont.style.display !== 'none') { contData = await dbLoadCont(); renderCont(); renderDash(); }
-  }, 30000);
-  console.log('Sync: activo (modo liviano)');
+  if (_realtimeChannel) return;
+
+  _realtimeChannel = _sb.channel('cambios_app')
+
+    /* ── Inventario ── */
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventario' },
+      function (payload) {
+        var nuevo = invFromDb(payload.new);
+        if (invData.find(function (r) { return r.id === nuevo.id; })) return;
+        if (!nuevo.estado) nuevo.estado = 'pendiente';
+        invData.unshift(nuevo);
+        renderInv(); renderDash();
+      }
+    )
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inventario' },
+      function (payload) {
+        var actualizado = invFromDb(payload.new);
+        var idx = invData.findIndex(function (r) { return r.id === actualizado.id; });
+        if (idx !== -1) { invData[idx] = actualizado; renderInv(); renderDash(); }
+      }
+    )
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'inventario' },
+      function (payload) {
+        invData = invData.filter(function (r) { return r.id !== payload.old.id; });
+        renderInv(); renderDash();
+      }
+    )
+
+    /* ── Contabilidad ── */
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contabilidad' },
+      function (payload) {
+        var nuevo = contFromDb(payload.new);
+        if (contData.find(function (r) { return r.id === nuevo.id; })) return;
+        contData.unshift(nuevo);
+        renderCont(); renderDash();
+      }
+    )
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'contabilidad' },
+      function (payload) {
+        var actualizado = contFromDb(payload.new);
+        var idx = contData.findIndex(function (r) { return r.id === actualizado.id; });
+        if (idx !== -1) { contData[idx] = actualizado; renderCont(); renderDash(); }
+      }
+    )
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'contabilidad' },
+      function (payload) {
+        contData = contData.filter(function (r) { return r.id !== payload.old.id; });
+        renderCont(); renderDash();
+      }
+    )
+
+    /* ── Usuarios ── */
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'users' },
+      function () {
+        dbLoadUsers().then(function (data) { users = data; renderUList(); });
+      }
+    )
+
+    .subscribe(function (status) {
+      console.log('Realtime:', status);
+    });
 }
 
-function stopSync() {
-  if (_syncInterval) { clearInterval(_syncInterval); _syncInterval = null; }
+function stopRealtime() {
+  if (_realtimeChannel) { _sb.removeChannel(_realtimeChannel); _realtimeChannel = null; }
 }
 
-window.addEventListener('beforeunload', stopSync);
+window.addEventListener('beforeunload', stopRealtime);
 
 
 /* ══════════════════════════════════════════════════════════════════
@@ -493,39 +543,30 @@ function renderBodegaFiltros() {
   var cont = document.getElementById('bodega-filtros');
   if (!cont) return;
 
+  /* Obtener bodegas únicas ordenadas, ignorando '—' */
   var bodegas = [];
   invData.forEach(function (r) {
-    if (r.bodega && r.bodega !== '\u2014' && bodegas.indexOf(r.bodega) === -1) {
+    if (r.bodega && r.bodega !== '—' && bodegas.indexOf(r.bodega) === -1) {
       bodegas.push(r.bodega);
     }
   });
-  bodegas.sort(function (a, b) {
-    return String(a).localeCompare(String(b), undefined, { numeric: true });
-  });
+  bodegas.sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); });
 
+  /* Si no hay bodegas, ocultar el contenedor */
   if (!bodegas.length) { cont.style.display = 'none'; return; }
-  cont.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:.9rem';
+  cont.style.display = '';
 
-  var todaClass = invFiltroBodega === 'todas' ? 'fest-btn active' : 'fest-btn';
-  var html = '<span style="font-size:12px;color:var(--text2);font-weight:500">Bodega:</span>';
-  html += '<button class="' + todaClass + '" onclick="setFiltroBodega(\'todas\')">Todas</button>';
+  var btns = '<button class="sort-btn' + (invFiltroBodega === 'todas' ? ' active' : '') + '" onclick="setFiltroBodega(\'todas\')">Todas</button>';
   bodegas.forEach(function (bod) {
-    var cls = invFiltroBodega === bod ? 'fest-btn active' : 'fest-btn';
-    html += '<button class="' + cls + '" onclick="setFiltroBodega(\'' + String(bod).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\')">' + bod + '</button>';
+    var active = invFiltroBodega === bod ? ' active' : '';
+    btns += '<button class="sort-btn' + active + '" onclick="setFiltroBodega(\'' + bod.replace(/'/g, "\\'") + '\')">' + bod + '</button>';
   });
-  cont.innerHTML = html;
+  cont.innerHTML = btns;
 }
 
 function getSorted(rows) {
   var arr = rows.slice();
-  if (invSort === 'bodega') {
-    arr.sort(function (a, b) {
-      if (a.bodega === '—' && b.bodega === '—') return 0;
-      if (a.bodega === '—') return 1;
-      if (b.bodega === '—') return -1;
-      return String(a.bodega).localeCompare(String(b.bodega), undefined, { numeric: true });
-    });
-  } else if (invSort === 'pin') {
+  if (invSort === 'pin') {
     arr.sort(function (a, b) { return String(a.pin).localeCompare(String(b.pin), undefined, { numeric: true }); });
   } else if (invSort === 'fecha') {
     arr.sort(function (a, b) {
