@@ -114,7 +114,6 @@ async function dbLoadInv() {
 }
 
 async function dbInsertInv(item) {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('inventario')
     .insert({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado || 'pendiente', fecha: item.fecha })
     .select('id').single();
@@ -123,7 +122,6 @@ async function dbInsertInv(item) {
 }
 
 async function dbUpdateInv(item) {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { error } = await _sb.from('inventario')
     .update({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha })
     .eq('id', item.id);
@@ -131,7 +129,6 @@ async function dbUpdateInv(item) {
 }
 
 async function dbDeleteInv(id) {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { error } = await _sb.from('inventario').delete().eq('id', id);
   if (error) console.error('Error eliminando inventario:', error);
 }
@@ -144,7 +141,6 @@ async function dbLoadCont() {
 }
 
 async function dbInsertCont(item) {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('contabilidad')
     .insert({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
     .select('id').single();
@@ -153,7 +149,6 @@ async function dbInsertCont(item) {
 }
 
 async function dbUpdateCont(item) {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { error } = await _sb.from('contabilidad')
     .update({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
     .eq('id', item.id);
@@ -161,7 +156,6 @@ async function dbUpdateCont(item) {
 }
 
 async function dbDeleteCont(id) {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { error } = await _sb.from('contabilidad').delete().eq('id', id);
   if (error) console.error('Error eliminando contabilidad:', error);
 }
@@ -226,7 +220,6 @@ async function dbLoadLog() {
 }
 
 async function dbInsertLog(entry) {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var id = Date.now();
   var { error } = await _sb.from('session_log')
     .insert({ id: id, usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: id, salida: null, salida_ts: null });
@@ -236,7 +229,6 @@ async function dbInsertLog(entry) {
 }
 
 async function dbUpdateLog(id, updates) {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var payload = Object.assign({}, updates);
   if (payload.salida_ts && typeof payload.salida_ts !== 'number') {
     payload.salida_ts = Number(payload.salida_ts);
@@ -253,7 +245,6 @@ async function dbLoadActions() {
 }
 
 async function logAction(type, affected, detail) {
-  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var id = Date.now();
   var entry = { id: id, type: type, by: currentUser, affected: affected, detail: detail, fecha: nowStr() };
   adminActions.unshift(entry);
