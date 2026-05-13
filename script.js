@@ -13,6 +13,7 @@ var fmt    = function (n) { return '$' + Number(n).toLocaleString('es-CO'); };
 var nowStr = function () { return new Date().toLocaleString('es-CO'); };
 var isAdmin      = function () { return currentRole === 'admin' || currentRole === 'superadmin'; };
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
+var isOperario   = function () { return currentRole === 'operario'; };
 
 /* ══════════════════════════════════════════════════════════════════
     REALTIME — Sincronización en vivo
@@ -463,7 +464,22 @@ function enterApp() {
     sessionLog   = results[3];
     adminActions = results[4];
     invData.forEach(function (r) { if (!r.estado) r.estado = 'pendiente'; });
+    applyOperarioRestrictions();
     showTab('dashboard');
+  });
+}
+
+/* ── Restricciones visuales para operarios ───────────────────── */
+function applyOperarioRestrictions() {
+  if (!isOperario()) return;
+  /* Ocultar formularios de agregar en inventario y contabilidad */
+  var idsToHide = [
+    'add-inv-section', 'inv-add-section', 'inv-form', 'form-inv',
+    'add-cont-section', 'cont-add-section', 'cont-form', 'form-cont'
+  ];
+  idsToHide.forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = 'none';
   });
 }
 
@@ -570,6 +586,7 @@ function getDupGuias() {
 }
 
 async function toggleEstado(id) {
+  if (isOperario()) return; /* Operario: solo lectura */
   var rec = invData.find(function (r) { return r.id === id; }); if (!rec) return;
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
@@ -579,6 +596,7 @@ async function toggleEstado(id) {
 }
 
 async function addInventario() {
+  if (isOperario()) { alert('Solo lectura: los operarios no pueden agregar registros de inventario.'); return; }
   var g = document.getElementById('i-guia').value.trim();
   var b = document.getElementById('i-bodega').value.trim();
   var p = document.getElementById('i-pin').value.trim();
@@ -713,6 +731,7 @@ function calcTotals() {
 }
 
 async function addContabilidad() {
+  if (isOperario()) { alert('Solo lectura: los operarios no pueden agregar registros contables.'); return; }
   var fecha  = document.getElementById('c-fecha').value;
   var equipo = document.getElementById('c-equipo').value.trim();
   if (!fecha || !equipo) { alert('Completa fecha y equipo.'); return; }
@@ -954,7 +973,7 @@ function renderUList() {
     var canChangeRole = isSuperAdmin() && !isSA && !isMe;
     var canDelete     = isSuperAdmin() && !isSA && !isMe;
     /* ── CAMBIO 2: superadmin no puede editar a otro superadmin ── */
-    var canEdit       = isMe || (isSuperAdmin() && !isSA);
+    var canEdit       = !isOperario() && (isMe || (isSuperAdmin() && !isSA));
 
     var roleCtrl = '';
     if (isSA) {
@@ -987,6 +1006,7 @@ function renderUList() {
 /* ── Editar usuario ──────────────────────────────────────────── */
 var _editTarget = null;
 function openEditModal(username) {
+  if (isOperario()) { alert('Los operarios no pueden editar su usuario ni contraseña.'); return; }
   if (!isSuperAdmin() && username !== currentUser) { alert('Solo el superadmin puede editar otros usuarios.'); return; }
   /* ── CAMBIO 3: bloquear edición de otro superadmin ── */
   var targetUser = users.find(function (x) { return x.username === username; });
@@ -1010,6 +1030,7 @@ function closeEditModal() { document.getElementById('edit-modal-bg').style.displ
 
 async function confirmEdit() {
   if (!_editTarget) return;
+  if (isOperario()) { alert('Los operarios no pueden editar su usuario ni contraseña.'); return; }
   if (!isSuperAdmin() && _editTarget !== currentUser) { alert('Sin permisos.'); return; }
 
   var newName = document.getElementById('edit-name-input').value.trim();
