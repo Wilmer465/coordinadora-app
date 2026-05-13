@@ -553,6 +553,33 @@ async function doLogin() {
 }
 
 stopInactivityWatch();
+/* ── Cierre de sesión al cerrar pestaña/ventana ───────────────── */
+window.addEventListener('beforeunload', function () {
+  if (!currentUser) return;
+
+  var open = sessionLog.find(function (s) {
+    return s.user === currentUser && !s.salida;
+  });
+  if (!open) return;
+
+  // navigator.sendBeacon garantiza que el request llega
+  // aunque la página ya esté cerrándose
+  var payload = JSON.stringify({
+    p_username : currentUser,
+    p_role     : currentRole,
+    p_id       : open.id,
+    p_salida   : nowStr(),
+    p_salida_ts: Date.now()
+  });
+
+  navigator.sendBeacon(
+    SUPABASE_URL + '/rest/v1/rpc/update_session_log',
+    new Blob([payload], { type: 'application/json' })
+  );
+
+  sessDel('sess_v9');
+  sessDel('role_v9');
+});
 showScreen('screen-login');
 function doLogout() {
   var open = sessionLog.find(function (s) { return s.user === currentUser && !s.salida; });
