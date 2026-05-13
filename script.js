@@ -553,42 +553,6 @@ async function doLogin() {
 }
 
 stopInactivityWatch();
-window.addEventListener('visibilitychange', function () {
-  if (document.visibilityState !== 'hidden') return;
-  if (!currentUser) return;
-
-  var open = sessionLog.find(function (s) {
-    return s.user === currentUser && !s.salida;
-  });
-  if (!open) return;
-
-  var salida   = nowStr();
-  var salidaTS = Date.now();
-
-  // Actualizar local inmediatamente
-  open.salida   = salida;
-  open.salidaTS = salidaTS;
-  sessDel('sess_v9');
-  sessDel('role_v9');
-
-  // keepalive: el navegador completa el fetch aunque la pestaña cierre
-  fetch(SUPABASE_URL + '/rest/v1/rpc/update_session_log', {
-    method    : 'POST',
-    keepalive : true,              // ← clave: sobrevive al cierre de pestaña
-    headers   : {
-      'Content-Type' : 'application/json',
-      'apikey'       : SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY
-    },
-    body: JSON.stringify({
-      p_username : currentUser,
-      p_role     : currentRole,
-      p_id       : open.id,
-      p_salida   : salida,
-      p_salida_ts: salidaTS
-    })
-  }).catch(function () {});
-});
 showScreen('screen-login');
 function doLogout() {
   var open = sessionLog.find(function (s) { return s.user === currentUser && !s.salida; });
