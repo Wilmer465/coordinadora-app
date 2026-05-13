@@ -21,66 +21,12 @@ var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 /* ── Canal Realtime de Supabase ──────────────────────────────── */
 var _realtimeChannel = null;
 
-/* ── Broadcast: envía cambio a todos los otros usuarios ───────── */
-function broadcastChange(event, payload) {
-  if (!_realtimeChannel) return;
-  _realtimeChannel.send({ type: 'broadcast', event: event, payload: payload })
-    .catch(function (e) { console.warn('Broadcast error:', e); });
-}
-
 function initRealtime() {
   if (_realtimeChannel) return;
 
-  _realtimeChannel = _sb.channel('cambios_app', {
-    config: { broadcast: { self: false } }   // no recibir tus propios broadcasts
-  })
+  _realtimeChannel = _sb.channel('cambios_app')
 
-    /* ══ BROADCAST — inmediato, sin depender de RLS ni dashboard ══ */
-
-    /* ── Inventario broadcast ── */
-    .on('broadcast', { event: 'inv_insert' }, function (msg) {
-      var item = msg.payload;
-      if (!item || invData.find(function (r) { return r.id === item.id; })) return;
-      if (!item.estado) item.estado = 'pendiente';
-      invData.unshift(item);
-      renderInv(); renderDash();
-    })
-    .on('broadcast', { event: 'inv_update' }, function (msg) {
-      var item = msg.payload; if (!item) return;
-      var idx = invData.findIndex(function (r) { return r.id === item.id; });
-      if (idx !== -1) { invData[idx] = item; renderInv(); renderDash(); }
-    })
-    .on('broadcast', { event: 'inv_delete' }, function (msg) {
-      var id = msg.payload && msg.payload.id; if (!id) return;
-      invData = invData.filter(function (r) { return r.id !== id; });
-      renderInv(); renderDash();
-    })
-
-    /* ── Contabilidad broadcast ── */
-    .on('broadcast', { event: 'cont_insert' }, function (msg) {
-      var item = msg.payload;
-      if (!item || contData.find(function (r) { return r.id === item.id; })) return;
-      contData.unshift(item);
-      renderCont(); renderDash();
-    })
-    .on('broadcast', { event: 'cont_update' }, function (msg) {
-      var item = msg.payload; if (!item) return;
-      var idx = contData.findIndex(function (r) { return r.id === item.id; });
-      if (idx !== -1) { contData[idx] = item; renderCont(); renderDash(); }
-    })
-    .on('broadcast', { event: 'cont_delete' }, function (msg) {
-      var id = msg.payload && msg.payload.id; if (!id) return;
-      contData = contData.filter(function (r) { return r.id !== id; });
-      renderCont(); renderDash();
-    })
-
-    /* ── Usuarios broadcast ── */
-    .on('broadcast', { event: 'users_change' }, function () {
-      dbLoadUsers().then(function (data) { users = data; renderUList(); });
-    })
-
-    /* ══ POSTGRES_CHANGES — respaldo si el broadcast falla ════════ */
-
+    /* ── Inventario ── */
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventario' },
       function (payload) {
         var nuevo = invFromDb(payload.new);
@@ -103,6 +49,8 @@ function initRealtime() {
         renderInv(); renderDash();
       }
     )
+
+    /* ── Contabilidad ── */
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contabilidad' },
       function (payload) {
         var nuevo = contFromDb(payload.new);
@@ -124,6 +72,8 @@ function initRealtime() {
         renderCont(); renderDash();
       }
     )
+
+    /* ── Usuarios ── */
     .on('postgres_changes', { event: '*', schema: 'public', table: 'users' },
       function () {
         dbLoadUsers().then(function (data) { users = data; renderUList(); });
@@ -158,76 +108,63 @@ function actionToDb(r)   { return { id: r.id, type: r.type, by: r.by, affected: 
 
 /* ── Inventario — CRUD ────────────────────────────────────────── */
 async function dbLoadInv() {
+  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando inventario:', error); return []; }
   return (data || []).map(invFromDb);
 }
 
 async function dbInsertInv(item) {
-  var { data, error } = await _sb.rpc('insert_inventario', {
-    p_username: currentUser, p_role: currentRole,
-    p_guia: item.guia, p_bodega: item.bodega, p_pin: item.pin,
-    p_estado: item.estado || 'pendiente', p_fecha: item.fecha
-  });
+  var { data, error } = await _sb.from('inventario')
+    .insert({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado || 'pendiente', fecha: item.fecha })
+    .select('id').single();
   if (error) { console.error('Error insertando inventario:', error); return null; }
-  return data || null;
+  return data ? data.id : null;
 }
 
 async function dbUpdateInv(item) {
-  var { error } = await _sb.rpc('update_inventario', {
-    p_username: currentUser, p_role: currentRole,
-    p_id: item.id, p_guia: item.guia, p_bodega: item.bodega,
-    p_pin: item.pin, p_estado: item.estado, p_fecha: item.fecha
-  });
+  var { error } = await _sb.from('inventario')
+    .update({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha })
+    .eq('id', item.id);
   if (error) console.error('Error actualizando inventario:', error);
 }
 
 async function dbDeleteInv(id) {
-  var { error } = await _sb.rpc('delete_inventario', {
-    p_username: currentUser, p_role: currentRole,
-    p_id: id
-  });
+  var { error } = await _sb.from('inventario').delete().eq('id', id);
   if (error) console.error('Error eliminando inventario:', error);
 }
 
 /* ── Contabilidad — CRUD ──────────────────────────────────────── */
 async function dbLoadCont() {
+  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando contabilidad:', error); return []; }
   return (data || []).map(contFromDb);
 }
 
 async function dbInsertCont(item) {
-  var { data, error } = await _sb.rpc('insert_contabilidad', {
-    p_username: currentUser, p_role: currentRole,
-    p_fecha: item.fecha, p_equipo: item.equipo,
-    p_valor_m: item.valorM, p_valor_b: item.valorB,
-    p_total: item.total, p_denoms: item.denoms || null
-  });
+  var { data, error } = await _sb.from('contabilidad')
+    .insert({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
+    .select('id').single();
   if (error) { console.error('Error insertando contabilidad:', error); return null; }
-  return data || null;
+  return data ? data.id : null;
 }
 
 async function dbUpdateCont(item) {
-  var { error } = await _sb.rpc('update_contabilidad', {
-    p_username: currentUser, p_role: currentRole,
-    p_id: item.id, p_fecha: item.fecha, p_equipo: item.equipo,
-    p_valor_m: item.valorM, p_valor_b: item.valorB,
-    p_total: item.total, p_denoms: item.denoms || null
-  });
+  var { error } = await _sb.from('contabilidad')
+    .update({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
+    .eq('id', item.id);
   if (error) console.error('Error actualizando contabilidad:', error);
 }
 
 async function dbDeleteCont(id) {
-  var { error } = await _sb.rpc('delete_contabilidad', {
-    p_username: currentUser, p_role: currentRole,
-    p_id: id
-  });
+  var { error } = await _sb.from('contabilidad').delete().eq('id', id);
   if (error) console.error('Error eliminando contabilidad:', error);
 }
 
 /* ── Usuarios — CRUD ──────────────────────────────────────────── */
 async function dbLoadUsers() {
+  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('users_safe').select('*');
   if (error) { console.error('Error cargando usuarios:', error); return []; }
   return data || [];
@@ -239,11 +176,11 @@ async function dbCreateUser(username, password, role) {
 }
 
 async function dbDeleteUser(username) {
+  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
+
   var rpcRes = await _sb.rpc('delete_user', { p_username: username });
   if (!rpcRes.error) return null;
 
-  /* Fallback: la RPC delete_user no existe o falló, intentar directo */
-  console.warn('delete_user RPC falló, intentando borrado directo...');
   var { error, count } = await _sb.from('users')
     .delete({ count: 'exact' })
     .eq('username', username);
@@ -261,11 +198,8 @@ async function dbDeleteUser(username) {
 }
 
 async function dbUpdateUserMeta(username, updates) {
-  var { error } = await _sb.rpc('update_user_meta', {
-    p_username: currentUser, p_role: currentRole,
-    p_target: username,
-    p_updates: updates
-  });
+  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
+  var { error } = await _sb.from('users').update(updates).eq('username', username);
   if (error) console.error('Error actualizando usuario:', error);
   return error || null;
 }
@@ -283,6 +217,7 @@ async function dbChangePassword(username, newPassword) {
 
 /* ── Sesiones — CRUD ──────────────────────────────────────────── */
 async function dbLoadLog() {
+  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('session_log').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando sesiones:', error); return []; }
   return (data || []).map(logFromDb);
@@ -290,29 +225,25 @@ async function dbLoadLog() {
 
 async function dbInsertLog(entry) {
   var id = Date.now();
-  var { error } = await _sb.rpc('insert_session_log', {
-    p_username: currentUser, p_role: currentRole,
-    p_id: id, p_usuario: entry.user,
-    p_ingreso: entry.ingreso, p_ingreso_ts: id
-  });
+  var { error } = await _sb.from('session_log')
+    .insert({ id: id, usuario: entry.user, ingreso: entry.ingreso, ingreso_ts: id, salida: null, salida_ts: null });
   if (error) { console.error('Error insertando sesión:', error); return; }
   entry.id = id;
   entry.ingresoTS = id;
 }
 
 async function dbUpdateLog(id, updates) {
-  var salidaTs = updates.salida_ts ? Number(updates.salida_ts) : null;
-  var { error } = await _sb.rpc('update_session_log', {
-    p_username: currentUser, p_role: currentRole,
-    p_id: id,
-    p_salida: updates.salida || null,
-    p_salida_ts: salidaTs
-  });
+  var payload = Object.assign({}, updates);
+  if (payload.salida_ts && typeof payload.salida_ts !== 'number') {
+    payload.salida_ts = Number(payload.salida_ts);
+  }
+  var { error } = await _sb.from('session_log').update(payload).eq('id', id);
   if (error) console.error('Error actualizando sesión:', error);
 }
 
 /* ── Acciones Admin — CRUD ────────────────────────────────────── */
 async function dbLoadActions() {
+  await _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole });
   var { data, error } = await _sb.from('admin_actions').select('*').order('id', { ascending: false });
   if (error) { console.error('Error cargando acciones:', error); return []; }
   return (data || []).map(actionFromDb);
@@ -322,12 +253,8 @@ async function logAction(type, affected, detail) {
   var id = Date.now();
   var entry = { id: id, type: type, by: currentUser, affected: affected, detail: detail, fecha: nowStr() };
   adminActions.unshift(entry);
-  var { error } = await _sb.rpc('insert_admin_action', {
-    p_username: currentUser, p_role: currentRole,
-    p_id: id, p_type: type,
-    p_by: currentUser, p_affected: affected,
-    p_detail: detail, p_fecha: entry.fecha
-  });
+  var { error } = await _sb.from('admin_actions')
+    .insert({ id: id, type: type, by: currentUser, affected: affected, detail: detail, fecha: entry.fecha });
   if (error) { console.error('Error registrando acción:', error); return; }
 }
 
@@ -676,7 +603,6 @@ async function toggleEstado(id) {
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
   await dbUpdateInv(rec);
-  broadcastChange('inv_update', { id: rec.id, guia: rec.guia, bodega: rec.bodega, pin: rec.pin, estado: rec.estado, fecha: rec.fecha });
   renderInv();
 }
 
@@ -691,7 +617,7 @@ async function addInventario() {
   var newId = await dbInsertInv(item);
   if (newId) {
     item.id = newId;
-    broadcastChange('inv_insert', { id: item.id, guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha });
+    renderInv(); /* re-renderizar con el ID real para que el botón editar funcione */
   } else {
     invData = invData.filter(function (r) { return r !== item; });
     renderInv();
@@ -708,7 +634,6 @@ async function delInv(id) {
   if (!ok) return;
   invData = invData.filter(function (r) { return r.id !== id; });
   await dbDeleteInv(id);
-  broadcastChange('inv_delete', { id: id });
   await logAction('eliminacion_inv', rec.guia,
     'Eliminó guía "' + rec.guia + '" | Bodega: ' + rec.bodega + ' | PIN: ' + rec.pin);
   renderInv(); renderDash();
@@ -789,10 +714,9 @@ async function confirmEditInv() {
   var errEl = document.getElementById('ei-err');
   if (!g) { errEl.textContent = 'La guía es obligatoria.'; errEl.style.display = 'block'; return; }
   var r = invData.find(function (x) { return x.id === _editInvId; }); if (!r) return;
-  var old = { guia: r.guia, bodega: r.bodega, pin: r.pin };
+  var old = Object.assign({}, r);
   r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
   await dbUpdateInv(r);
-  broadcastChange('inv_update', { id: r.id, guia: r.guia, bodega: r.bodega, pin: r.pin, estado: r.estado, fecha: r.fecha });
   await logAction('edicion_inv', r.guia,
     'Editó guía: "' + old.guia + '" → "' + r.guia + '" | Bodega: "' + old.bodega + '" → "' + r.bodega + '" | PIN: "' + old.pin + '" → "' + r.pin + '"');
   closeEditInv(); renderInv();
@@ -830,7 +754,7 @@ async function addContabilidad() {
   var newId = await dbInsertCont(item);
   if (newId) {
     item.id = newId;
-    broadcastChange('cont_insert', { id: item.id, fecha: item.fecha, equipo: item.equipo, valorM: item.valorM, valorB: item.valorB, total: item.total, denoms: item.denoms });
+    renderCont(); /* re-renderizar con el ID real para que el botón editar funcione */
   } else {
     contData = contData.filter(function (r) { return r !== item; });
     renderCont();
@@ -847,7 +771,6 @@ async function delCont(id) {
   if (!ok) return;
   contData = contData.filter(function (r) { return r.id !== id; });
   await dbDeleteCont(id);
-  broadcastChange('cont_delete', { id: id });
   await logAction('eliminacion_cont', rec.equipo,
     'Eliminó registro contable | Equipo: ' + rec.equipo + ' | Fecha: ' + rec.fecha + ' | Total: ' + fmt(rec.total));
   renderCont();
@@ -924,7 +847,6 @@ async function confirmEditCont() {
   r.fecha  = new Date(fecha).toLocaleString('es-CO');
   r.equipo = equipo; r.valorM = m; r.valorB = b; r.total = m + b; r.denoms = denoms;
   await dbUpdateCont(r);
-  broadcastChange('cont_update', { id: r.id, fecha: r.fecha, equipo: r.equipo, valorM: r.valorM, valorB: r.valorB, total: r.total, denoms: r.denoms });
   await logAction('edicion_cont', r.equipo,
     'Editó registro contable "' + r.equipo + '" | Total: ' + fmt(oldTotal) + ' → ' + fmt(r.total));
   closeEditCont(); renderCont();
@@ -994,7 +916,6 @@ async function addUser() {
   }
 
   users.push({ username: u, role: 'operario' });
-  broadcastChange('users_change', {});
   await logAction('creacion_usuario', u, 'Creó el usuario "' + u + '" con rol: operario');
   renderUList();
   document.getElementById('nu-user').value = '';
@@ -1022,7 +943,6 @@ async function delUser(u) {
     alert('Error al eliminar "' + u + '":\n' + (dbErr.message || dbErr));
     return;
   }
-  broadcastChange('users_change', {});
   await logAction('eliminacion', u, 'Eliminó al usuario "' + u + '" (rol: ' + (target.role || 'operario') + ')');
 }
 
@@ -1041,7 +961,6 @@ async function changeRole(username, newRole) {
   var oldRole = u.role;
   u.role = newRole;
   await dbUpdateUserMeta(username, { role: newRole });
-  broadcastChange('users_change', {});
   await logAction('cambio_rol', username, 'Cambió rol de "' + username + '" de ' + oldRole + ' a ' + newRole);
   renderUList();
 }
@@ -1137,10 +1056,7 @@ async function confirmEdit() {
   var changes = [];
 
   if (newName !== oldName) {
-    var { error: nameErr } = await _sb.rpc('rename_user', {
-      p_username: currentUser, p_role: currentRole,
-      p_old_name: oldName, p_new_name: newName
-    });
+    var { error: nameErr } = await _sb.from('users').update({ username: newName }).eq('username', oldName);
     if (nameErr) { errEl.textContent = 'Error al cambiar nombre: ' + nameErr.message; errEl.style.display = 'block'; return; }
     u.username = newName;
     sessionLog.forEach(function (s) { if (s.user === oldName) s.user = newName; });
