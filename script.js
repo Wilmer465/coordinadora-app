@@ -250,12 +250,17 @@ async function dbLoadActions() {
 }
 
 async function logAction(type, affected, detail) {
-  var id = Date.now();
-  var entry = { id: id, type: type, by: currentUser, affected: affected, detail: detail, fecha: nowStr() };
+  var fecha = nowStr();
+  var entry = { id: Date.now(), type: type, by: currentUser, affected: affected, detail: detail, fecha: fecha };
   adminActions.unshift(entry);
-  var { error } = await _sb.from('admin_actions')
-    .insert({ id: id, type: type, by: currentUser, affected: affected, detail: detail, fecha: entry.fecha });
-  if (error) { console.error('Error registrando acción:', error); return; }
+  var { error } = await _sb.rpc('log_action', {
+    p_type:     type,
+    p_by:       currentUser,
+    p_affected: affected,
+    p_detail:   detail,
+    p_fecha:    fecha
+  });
+  if (error) { console.error('Error registrando acción:', error); }
 }
 
 
