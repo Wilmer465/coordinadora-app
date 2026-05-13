@@ -1,7 +1,4 @@
-
-
-/* ═════════════ CLIENTE SUPABASE ══════════════════════════ 
-═════════════════════════════════════════════════════════════*/
+/* ── CLIENTE SUPABASE ─────────────────────────────────────────── */
 const SUPABASE_URL = 'https://llkfdckqovgfguponutg.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_3LLyKJdKoG1ag4bIdDfpQg_IolLFXUQ';
 const _sb = supabase.createClient('https://llkfdckqovgfguponutg.supabase.co', 'sb_publishable_3LLyKJdKoG1ag4bIdDfpQg_IolLFXUQ');
@@ -17,65 +14,32 @@ var nowStr = function () { return new Date().toLocaleString('es-CO'); };
 var isAdmin      = function () { return currentRole === 'admin' || currentRole === 'superadmin'; };
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 
-
 /* ══════════════════════════════════════════════════════════════════
     REALTIME — Sincronización en vivo
    ══════════════════════════════════════════════════════════════════ */
-var _realtimeChannel = null;
+
+/* ── Variable de control del sync ────────────────────────────── */
+var _syncInterval = null;
+/* _realtimeChannel eliminado — reemplazado por sync liviano */
 
 function initRealtime() {
-  if (_realtimeChannel) return;
-
-  _realtimeChannel = _sb.channel('cambios_app')
-
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventario' },
-      function (payload) {
-        var nuevo = invFromDb(payload.new);
-        if (invData.find(function (r) { return r.id === nuevo.id; })) return;
-        invData.unshift(nuevo);
-        renderInv(); renderDash();
-      }
-    )
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inventario' },
-      function (payload) {
-        var actualizado = invFromDb(payload.new);
-        var idx = invData.findIndex(function (r) { return r.id === actualizado.id; });
-        if (idx !== -1) { invData[idx] = actualizado; renderInv(); renderDash(); }
-      }
-    )
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'inventario' },
-      function (payload) {
-        invData = invData.filter(function (r) { return r.id !== payload.old.id; });
-        renderInv(); renderDash();
-      }
-    )
-
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contabilidad' },
-      function (payload) {
-        var nuevo = contFromDb(payload.new);
-        if (contData.find(function (r) { return r.id === nuevo.id; })) return;
-        contData.unshift(nuevo);
-        renderCont(); renderDash();
-      }
-    )
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'contabilidad' },
-      function (payload) {
-        var actualizado = contFromDb(payload.new);
-        var idx = contData.findIndex(function (r) { return r.id === actualizado.id; });
-        if (idx !== -1) { contData[idx] = actualizado; renderCont(); renderDash(); }
-      }
-    )
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'contabilidad' },
-      function (payload) {
-        contData = contData.filter(function (r) { return r.id !== payload.old.id; });
-        renderCont(); renderDash();
-      }
-    )
-
-    .subscribe(function (status) {
-      console.log('Realtime:', status);
-    });
+  if (_syncInterval) return;
+  /* Refrescar datos cada 30 s solo si la pestaña está visible */
+  _syncInterval = setInterval(async function () {
+    if (document.hidden) return;
+    var tabInv  = document.getElementById('tab-inventario');
+    var tabCont = document.getElementById('tab-contabilidad');
+    if (tabInv  && tabInv.style.display  !== 'none') { invData  = await dbLoadInv();  renderInv();  renderDash(); }
+    if (tabCont && tabCont.style.display !== 'none') { contData = await dbLoadCont(); renderCont(); renderDash(); }
+  }, 30000);
+  console.log('Sync: activo (modo liviano)');
 }
+
+function stopSync() {
+  if (_syncInterval) { clearInterval(_syncInterval); _syncInterval = null; }
+}
+
+window.addEventListener('beforeunload', stopSync);
 
 
 /* ══════════════════════════════════════════════════════════════════
@@ -356,36 +320,126 @@ function closeDrawer() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-    SYNC — Refresco liviano en lugar de Realtime continuo
+    AUTENTICACIÓN
    ══════════════════════════════════════════════════════════════════ */
-var _syncInterval = null;
+async function doLogin() {
+  var u   = document.getElementById('l-user').value.trim();
+  var p   = document.getElementById('l-pass').value;
+  var err = document.getElementById('login-err');
 
-function initRealtime() {
-  if (_syncInterval) return;
+  err.style.display = 'none';
+  if (!u || !p) {
+    err.style.display = 'block';
+    err.textContent = 'Ingresa usuario y contraseña.';
+    return;
+  }
 
-  // Refrescar datos cada 30 segundos solo si la pestaña está visible
-  _syncInterval = setInterval(async function () {
-    if (document.hidden) return;        // no hacer nada si el usuario no está mirando
-    var tabInv  = document.querySelector('#tab-inv.active');
-    var tabCont = document.querySelector('#tab-cont.active');
-    if (tabInv) {
-      invData  = await dbLoadInv();
-      renderInv(); renderDash();
-    } else if (tabCont) {
-      contData = await dbLoadCont();
-      renderCont(); renderDash();
+  var btn = document.querySelector('.btn-login');
+  if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
+
+  try {
+    console.log('paso 1: verificando contraseña...');
+    var { data: authData, error: authError } = await _sb.rpc('verify_password', {
+      p_username: u, p_password: p
+    });
+    console.log('paso 1 ok:', JSON.stringify(authData), JSON.stringify(authError));
+
+    var authOk   = authData && authData[0] && (authData[0].ok === true || authData[0].ok === 'true');
+    var authRole = authData && authData[0] && authData[0].role;
+    if (authError || !authOk || !authRole) {
+      err.style.display = 'block';
+      err.textContent = 'Usuario o contraseña incorrectos.';
+      return;
     }
-  }, 30000); // cada 30 segundos
 
-  console.log('Sync: activo (modo liviano)');
+    var role = authRole;
+    console.log('paso 2: activando sesión RLS, user=' + u + ' role=' + role);
+    await _sb.rpc('set_session_user', { p_username: u, p_role: role });
+    console.log('paso 2 ok');
+
+    currentUser = u;
+    currentRole = role;
+    sessSet('sess_v9', u);
+    sessSet('role_v9', role);
+
+    console.log('paso 3: registrando ingreso...');
+    var entry = { id: null, user: u, ingreso: nowStr(), ingresoTS: Date.now(), salidaTS: null, salida: null };
+    sessionLog.unshift(entry);
+    await dbInsertLog(entry);
+    console.log('paso 3 ok, entry.id=' + entry.id);
+
+    console.log('paso 4: entrando a la app...');
+    enterApp();
+
+  } catch (e) {
+    err.style.display = 'block';
+    err.textContent = 'Error: ' + e.message;
+    console.error('Login error:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Iniciar sesión'; }
+  }
 }
 
-function stopSync() {
-  if (_syncInterval) { clearInterval(_syncInterval); _syncInterval = null; }
+function doLogout() {
+  var open = sessionLog.find(function (s) { return s.user === currentUser && !s.salida; });
+  if (open) {
+    open.salida   = nowStr();
+    open.salidaTS = Date.now();
+    dbUpdateLog(open.id, { salida: open.salida, salida_ts: open.salidaTS });
+  }
+
+  currentUser = null;
+  currentRole = null;
+  sessDel('sess_v9');
+  sessDel('role_v9');
+
+  document.getElementById('l-user').value = '';
+  document.getElementById('l-pass').value = '';
+  document.getElementById('login-err').style.display = 'none';
+  closeDrawer();
+  showScreen('screen-login');
 }
 
-// Detener sync al cerrar/recargar la página
-window.addEventListener('beforeunload', stopSync);
+function sessGet(k)    { try { return localStorage.getItem(k);    } catch (e) { return null; } }
+function sessSet(k, v) { try { localStorage.setItem(k, v);        } catch (e) { }             }
+function sessDel(k)    { try { localStorage.removeItem(k);         } catch (e) { }             }
+
+function enterApp() {
+  var roleLabel = isSuperAdmin() ? 'Superadmin' : currentRole === 'admin' ? 'Administrador' : 'Operario';
+  document.getElementById('d-av').textContent    = currentUser.slice(0, 1).toUpperCase();
+  document.getElementById('d-name').textContent   = currentUser;
+  document.getElementById('d-roletxt').textContent = roleLabel;
+  document.getElementById('drw-admin').style.display = isAdmin() ? 'block' : 'none';
+
+  var bnavAdmin = document.getElementById('bnav-admin');
+  if (bnavAdmin) bnavAdmin.style.display = isAdmin() ? 'flex' : 'none';
+
+  var addSec = document.getElementById('add-user-section');
+  if (addSec) addSec.style.display = isSuperAdmin() ? '' : 'none';
+
+  var now = new Date();
+  var cFecha = document.getElementById('c-fecha');
+  if (cFecha) cFecha.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+  initRealtime();
+  showScreen('screen-app');
+
+  Promise.all([
+    dbLoadInv(),
+    dbLoadCont(),
+    dbLoadUsers(),
+    dbLoadLog(),
+    dbLoadActions()
+  ]).then(function (results) {
+    invData      = results[0];
+    contData     = results[1];
+    users        = results[2];
+    sessionLog   = results[3];
+    adminActions = results[4];
+    invData.forEach(function (r) { if (!r.estado) r.estado = 'pendiente'; });
+    showTab('dashboard');
+  });
+}
 
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1213,9 +1267,7 @@ function togglePw(id, btn) {
     : '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-      AUTO-AGREGAR GUÍA AL ESCANEAR CÓDIGOS DE BARRAS
-══════════════════════════════════════════════════════════════════════════════*/
+/* ── Auto-agregar guía al escanear código de barras ─────────────*/
 var _scanTimer = null;
 function autoAddGuia(input) {
   clearTimeout(_scanTimer);
