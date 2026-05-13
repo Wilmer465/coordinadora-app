@@ -13,7 +13,7 @@ var fmt    = function (n) { return '$' + Number(n).toLocaleString('es-CO'); };
 var nowStr = function () { return new Date().toLocaleString('es-CO'); };
 var isAdmin      = function () { return currentRole === 'admin' || currentRole === 'superadmin'; };
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
-var isOperario   = function () { return currentRole === 'operario'; };
+var isUsuario   = function () { return currentRole === 'usuario'; };
 
 /* ══════════════════════════════════════════════════════════════════
     REALTIME — Sincronización en vivo
@@ -140,7 +140,7 @@ async function dbLoadUsers() {
 }
 
 async function dbCreateUser(username, password, role) {
-  var { error } = await _sb.rpc('create_user', { p_username: username, p_password: password, p_role: role || 'operario' });
+  var { error } = await _sb.rpc('create_user', { p_username: username, p_password: password, p_role: role || 'usuario' });
   return error || null;
 }
 
@@ -432,7 +432,7 @@ function sessSet(k, v) { try { localStorage.setItem(k, v);        } catch (e) { 
 function sessDel(k)    { try { localStorage.removeItem(k);         } catch (e) { }             }
 
 function enterApp() {
-  var roleLabel = isSuperAdmin() ? 'Superadmin' : currentRole === 'admin' ? 'Administrador' : 'Operario';
+  var roleLabel = isSuperAdmin() ? 'Superadmin' : currentRole === 'admin' ? 'Administrador' : 'Usuario';
   document.getElementById('d-av').textContent    = currentUser.slice(0, 1).toUpperCase();
   document.getElementById('d-name').textContent   = currentUser;
   document.getElementById('d-roletxt').textContent = roleLabel;
@@ -464,14 +464,14 @@ function enterApp() {
     sessionLog   = results[3];
     adminActions = results[4];
     invData.forEach(function (r) { if (!r.estado) r.estado = 'pendiente'; });
-    applyOperarioRestrictions();
+    applyUsuarioRestrictions();
     showTab('dashboard');
   });
 }
 
-/* ── Restricciones visuales para operarios ───────────────────── */
-function applyOperarioRestrictions() {
-  if (!isOperario()) return;
+/* ── Restricciones visuales para usuarios ───────────────────── */
+function applyUsuarioRestrictions() {
+  if (!isUsuario()) return;
   /* Ocultar formularios de agregar en inventario y contabilidad */
   var idsToHide = [
     'add-inv-section', 'inv-add-section', 'inv-form', 'form-inv',
@@ -586,7 +586,7 @@ function getDupGuias() {
 }
 
 async function toggleEstado(id) {
-  if (isOperario()) return; /* Operario: solo lectura */
+  if (isUsuario()) return; /* Usuario: solo lectura */
   var rec = invData.find(function (r) { return r.id === id; }); if (!rec) return;
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
@@ -596,7 +596,7 @@ async function toggleEstado(id) {
 }
 
 async function addInventario() {
-  if (isOperario()) { alert('Solo lectura: los operarios no pueden agregar registros de inventario.'); return; }
+  if (isUsuario()) { alert('Solo lectura: los usuarios no pueden agregar registros de inventario.'); return; }
   var g = document.getElementById('i-guia').value.trim();
   var b = document.getElementById('i-bodega').value.trim();
   var p = document.getElementById('i-pin').value.trim();
@@ -731,7 +731,7 @@ function calcTotals() {
 }
 
 async function addContabilidad() {
-  if (isOperario()) { alert('Solo lectura: los operarios no pueden agregar registros contables.'); return; }
+  if (isUsuario()) { alert('Solo lectura: los usuarios no pueden agregar registros contables.'); return; }
   var fecha  = document.getElementById('c-fecha').value;
   var equipo = document.getElementById('c-equipo').value.trim();
   if (!fecha || !equipo) { alert('Completa fecha y equipo.'); return; }
@@ -905,15 +905,15 @@ async function addUser() {
 
   err.style.display = 'none';
 
-  var dbError = await dbCreateUser(u, p, 'operario');
+  var dbError = await dbCreateUser(u, p, 'usuario');
   if (dbError) {
     err.textContent = 'Error al crear usuario: ' + (dbError.message || dbError);
     err.style.display = 'block';
     return;
   }
 
-  users.push({ username: u, role: 'operario' });
-  await logAction('creacion_usuario', u, 'Creó el usuario "' + u + '" con rol: operario');
+  users.push({ username: u, role: 'usuario' });
+  await logAction('creacion_usuario', u, 'Creó el usuario "' + u + '" con rol: usuario');
   renderUList();
   document.getElementById('nu-user').value = '';
   document.getElementById('nu-pass').value = '';
@@ -940,7 +940,7 @@ async function delUser(u) {
     alert('Error al eliminar "' + u + '":\n' + (dbErr.message || dbErr));
     return;
   }
-  await logAction('eliminacion', u, 'Eliminó al usuario "' + u + '" (rol: ' + (target.role || 'operario') + ')');
+  await logAction('eliminacion', u, 'Eliminó al usuario "' + u + '" (rol: ' + (target.role || 'usuario') + ')');
 }
 
 async function changeRole(username, newRole) {
@@ -973,7 +973,7 @@ function renderUList() {
     var canChangeRole = isSuperAdmin() && !isSA && !isMe;
     var canDelete     = isSuperAdmin() && !isSA && !isMe;
     /* ── CAMBIO 2: superadmin no puede editar a otro superadmin ── */
-    var canEdit       = !isOperario() && (isMe || (isSuperAdmin() && !isSA));
+    var canEdit       = !isUsuario() && (isMe || (isSuperAdmin() && !isSA));
 
     var roleCtrl = '';
     if (isSA) {
@@ -982,7 +982,7 @@ function renderUList() {
       var isAR = u.role === 'admin';
       roleCtrl = '<div class="role-toggle">'
         + '<button class="' + (isAR ? 'ractive' : '') + '" onclick="changeRole(\'' + u.username + '\',\'admin\')">Admin</button>'
-        + '<button class="' + (!isAR ? 'ractive' : '') + '" onclick="changeRole(\'' + u.username + '\',\'operario\')">Operario</button>'
+        + '<button class="' + (!isAR ? 'ractive' : '') + '" onclick="changeRole(\'' + u.username + '\',\'usuario\')">Usuario</button>'
         + '</div>';
     } else {
       roleCtrl = '<span class="' + (u.role === 'admin' ? 'badge-admin' : 'badge-user') + '">' + u.role + '</span>';
@@ -1006,7 +1006,7 @@ function renderUList() {
 /* ── Editar usuario ──────────────────────────────────────────── */
 var _editTarget = null;
 function openEditModal(username) {
-  if (isOperario()) { alert('Los operarios no pueden editar su usuario ni contraseña.'); return; }
+  if (isUsuario()) { alert('Los usuarios no pueden editar su usuario ni contraseña.'); return; }
   if (!isSuperAdmin() && username !== currentUser) { alert('Solo el superadmin puede editar otros usuarios.'); return; }
   /* ── CAMBIO 3: bloquear edición de otro superadmin ── */
   var targetUser = users.find(function (x) { return x.username === username; });
@@ -1030,7 +1030,7 @@ function closeEditModal() { document.getElementById('edit-modal-bg').style.displ
 
 async function confirmEdit() {
   if (!_editTarget) return;
-  if (isOperario()) { alert('Los operarios no pueden editar su usuario ni contraseña.'); return; }
+  if (isUsuario()) { alert('Los usuarios no pueden editar su usuario ni contraseña.'); return; }
   if (!isSuperAdmin() && _editTarget !== currentUser) { alert('Sin permisos.'); return; }
 
   var newName = document.getElementById('edit-name-input').value.trim();
