@@ -356,126 +356,36 @@ function closeDrawer() {
 
 
 /* ══════════════════════════════════════════════════════════════════
-    AUTENTICACIÓN
+    SYNC — Refresco liviano en lugar de Realtime continuo
    ══════════════════════════════════════════════════════════════════ */
-async function doLogin() {
-  var u   = document.getElementById('l-user').value.trim();
-  var p   = document.getElementById('l-pass').value;
-  var err = document.getElementById('login-err');
+var _syncInterval = null;
 
-  err.style.display = 'none';
-  if (!u || !p) {
-    err.style.display = 'block';
-    err.textContent = 'Ingresa usuario y contraseña.';
-    return;
-  }
+function initRealtime() {
+  if (_syncInterval) return;
 
-  var btn = document.querySelector('.btn-login');
-  if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
-
-  try {
-    console.log('paso 1: verificando contraseña...');
-    var { data: authData, error: authError } = await _sb.rpc('verify_password', {
-      p_username: u, p_password: p
-    });
-    console.log('paso 1 ok:', JSON.stringify(authData), JSON.stringify(authError));
-
-    var authOk   = authData && authData[0] && (authData[0].ok === true || authData[0].ok === 'true');
-    var authRole = authData && authData[0] && authData[0].role;
-    if (authError || !authOk || !authRole) {
-      err.style.display = 'block';
-      err.textContent = 'Usuario o contraseña incorrectos.';
-      return;
+  // Refrescar datos cada 30 segundos solo si la pestaña está visible
+  _syncInterval = setInterval(async function () {
+    if (document.hidden) return;        // no hacer nada si el usuario no está mirando
+    var tabInv  = document.querySelector('#tab-inv.active');
+    var tabCont = document.querySelector('#tab-cont.active');
+    if (tabInv) {
+      invData  = await dbLoadInv();
+      renderInv(); renderDash();
+    } else if (tabCont) {
+      contData = await dbLoadCont();
+      renderCont(); renderDash();
     }
+  }, 30000); // cada 30 segundos
 
-    var role = authRole;
-    console.log('paso 2: activando sesión RLS, user=' + u + ' role=' + role);
-    await _sb.rpc('set_session_user', { p_username: u, p_role: role });
-    console.log('paso 2 ok');
-
-    currentUser = u;
-    currentRole = role;
-    sessSet('sess_v9', u);
-    sessSet('role_v9', role);
-
-    console.log('paso 3: registrando ingreso...');
-    var entry = { id: null, user: u, ingreso: nowStr(), ingresoTS: Date.now(), salidaTS: null, salida: null };
-    sessionLog.unshift(entry);
-    await dbInsertLog(entry);
-    console.log('paso 3 ok, entry.id=' + entry.id);
-
-    console.log('paso 4: entrando a la app...');
-    enterApp();
-
-  } catch (e) {
-    err.style.display = 'block';
-    err.textContent = 'Error: ' + e.message;
-    console.error('Login error:', e);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Iniciar sesión'; }
-  }
+  console.log('Sync: activo (modo liviano)');
 }
 
-function doLogout() {
-  var open = sessionLog.find(function (s) { return s.user === currentUser && !s.salida; });
-  if (open) {
-    open.salida   = nowStr();
-    open.salidaTS = Date.now();
-    dbUpdateLog(open.id, { salida: open.salida, salida_ts: open.salidaTS });
-  }
-
-  currentUser = null;
-  currentRole = null;
-  sessDel('sess_v9');
-  sessDel('role_v9');
-
-  document.getElementById('l-user').value = '';
-  document.getElementById('l-pass').value = '';
-  document.getElementById('login-err').style.display = 'none';
-  closeDrawer();
-  showScreen('screen-login');
+function stopSync() {
+  if (_syncInterval) { clearInterval(_syncInterval); _syncInterval = null; }
 }
 
-function sessGet(k)    { try { return localStorage.getItem(k);    } catch (e) { return null; } }
-function sessSet(k, v) { try { localStorage.setItem(k, v);        } catch (e) { }             }
-function sessDel(k)    { try { localStorage.removeItem(k);         } catch (e) { }             }
-
-function enterApp() {
-  var roleLabel = isSuperAdmin() ? 'Superadmin' : currentRole === 'admin' ? 'Administrador' : 'Operario';
-  document.getElementById('d-av').textContent    = currentUser.slice(0, 1).toUpperCase();
-  document.getElementById('d-name').textContent   = currentUser;
-  document.getElementById('d-roletxt').textContent = roleLabel;
-  document.getElementById('drw-admin').style.display = isAdmin() ? 'block' : 'none';
-
-  var bnavAdmin = document.getElementById('bnav-admin');
-  if (bnavAdmin) bnavAdmin.style.display = isAdmin() ? 'flex' : 'none';
-
-  var addSec = document.getElementById('add-user-section');
-  if (addSec) addSec.style.display = isSuperAdmin() ? '' : 'none';
-
-  var now = new Date();
-  var cFecha = document.getElementById('c-fecha');
-  if (cFecha) cFecha.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-
-  initRealtime();
-  showScreen('screen-app');
-
-  Promise.all([
-    dbLoadInv(),
-    dbLoadCont(),
-    dbLoadUsers(),
-    dbLoadLog(),
-    dbLoadActions()
-  ]).then(function (results) {
-    invData      = results[0];
-    contData     = results[1];
-    users        = results[2];
-    sessionLog   = results[3];
-    adminActions = results[4];
-    invData.forEach(function (r) { if (!r.estado) r.estado = 'pendiente'; });
-    showTab('dashboard');
-  });
-}
+// Detener sync al cerrar/recargar la página
+window.addEventListener('beforeunload', stopSync);
 
 
 /* ══════════════════════════════════════════════════════════════════
