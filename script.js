@@ -18,75 +18,68 @@ var isSuperAdmin = function () { return currentRole === 'superadmin'; };
     REALTIME — Sincronización en vivo
    ══════════════════════════════════════════════════════════════════ */
 
-/* ── Canal Realtime de Supabase ──────────────────────────────── */
-var _realtimeChannel = null;
+/* ── Broadcast Realtime ──────────────────────────────────────── */
+var _broadcastChannel = null;
+var _pollInterval    = null;
+var _lastInvLoad     = 0;
+var _lastContLoad    = 0;
 
 function initRealtime() {
-  if (_realtimeChannel) return;
+  if (_broadcastChannel) return;
 
-  _realtimeChannel = _sb.channel('cambios_app')
+  /* ── Canal Broadcast: cambios instantáneos entre usuarios ── */
+  _broadcastChannel = _sb.channel('app-sync', {
+    config: { broadcast: { self: false } }
+  })
+  .on('broadcast', { event: 'inv-change' }, function () {
+    dbLoadInv().then(function (data) { invData = data; renderInv(); renderDash(); });
+  })
+  .on('broadcast', { event: 'cont-change' }, function () {
+    dbLoadCont().then(function (data) { contData = data; renderCont(); renderDash(); });
+  })
+  .subscribe(function (status) {
+    console.log('Realtime:', status);
+  });
 
-    /* ── Inventario ── */
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventario' },
-      function (payload) {
-        var nuevo = invFromDb(payload.new);
-        if (invData.find(function (r) { return r.id === nuevo.id; })) return;
-        if (!nuevo.estado) nuevo.estado = 'pendiente';
-        invData.unshift(nuevo);
+  /* ── Polling de respaldo cada 10 s por si el broadcast falla ── */
+  _pollInterval = setInterval(function () {
+    if (document.hidden || !currentUser) return;
+    var now = Date.now();
+    /* Solo recargar si han pasado al menos 8 s desde la última carga */
+    if (now - _lastInvLoad > 8000) {
+      dbLoadInv().then(function (data) {
+        _lastInvLoad = Date.now();
+        invData = data;
         renderInv(); renderDash();
-      }
-    )
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inventario' },
-      function (payload) {
-        var actualizado = invFromDb(payload.new);
-        var idx = invData.findIndex(function (r) { return r.id === actualizado.id; });
-        if (idx !== -1) { invData[idx] = actualizado; renderInv(); renderDash(); }
-      }
-    )
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'inventario' },
-      function (payload) {
-        invData = invData.filter(function (r) { return r.id !== payload.old.id; });
-        renderInv(); renderDash();
-      }
-    )
-
-    /* ── Contabilidad ── */
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contabilidad' },
-      function (payload) {
-        var nuevo = contFromDb(payload.new);
-        if (contData.find(function (r) { return r.id === nuevo.id; })) return;
-        contData.unshift(nuevo);
+      });
+    }
+    if (now - _lastContLoad > 8000) {
+      dbLoadCont().then(function (data) {
+        _lastContLoad = Date.now();
+        contData = data;
         renderCont(); renderDash();
-      }
-    )
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'contabilidad' },
-      function (payload) {
-        var actualizado = contFromDb(payload.new);
-        var idx = contData.findIndex(function (r) { return r.id === actualizado.id; });
-        if (idx !== -1) { contData[idx] = actualizado; renderCont(); renderDash(); }
-      }
-    )
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'contabilidad' },
-      function (payload) {
-        contData = contData.filter(function (r) { return r.id !== payload.old.id; });
-        renderCont(); renderDash();
-      }
-    )
+      });
+    }
+  }, 10000);
+}
 
-    /* ── Usuarios ── */
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'users' },
-      function () {
-        dbLoadUsers().then(function (data) { users = data; renderUList(); });
-      }
-    )
+function broadcastInv() {
+  _lastInvLoad = Date.now(); /* evitar que el polling recargue justo después de un cambio propio */
+  if (_broadcastChannel) {
+    _broadcastChannel.send({ type: 'broadcast', event: 'inv-change', payload: {} });
+  }
+}
 
-    .subscribe(function (status) {
-      console.log('Realtime:', status);
-    });
+function broadcastCont() {
+  _lastContLoad = Date.now();
+  if (_broadcastChannel) {
+    _broadcastChannel.send({ type: 'broadcast', event: 'cont-change', payload: {} });
+  }
 }
 
 function stopRealtime() {
-  if (_realtimeChannel) { _sb.removeChannel(_realtimeChannel); _realtimeChannel = null; }
+  if (_broadcastChannel) { _sb.removeChannel(_broadcastChannel); _broadcastChannel = null; }
+  if (_pollInterval)     { clearInterval(_pollInterval); _pollInterval = null; }
 }
 
 window.addEventListener('beforeunload', stopRealtime);
@@ -608,6 +601,7 @@ async function toggleEstado(id) {
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
   await dbUpdateInv(rec);
+  broadcastInv();
   renderInv();
 }
 
@@ -623,6 +617,7 @@ async function addInventario() {
   if (newId) {
     item.id = newId;
     renderInv(); /* re-renderizar con el ID real para que el botón editar funcione */
+    broadcastInv();
   } else {
     invData = invData.filter(function (r) { return r !== item; });
     renderInv();
@@ -639,6 +634,7 @@ async function delInv(id) {
   if (!ok) return;
   invData = invData.filter(function (r) { return r.id !== id; });
   await dbDeleteInv(id);
+  broadcastInv();
   await logAction('eliminacion_inv', rec.guia,
     'Eliminó guía "' + rec.guia + '" | Bodega: ' + rec.bodega + ' | PIN: ' + rec.pin);
   renderInv(); renderDash();
@@ -722,6 +718,7 @@ async function confirmEditInv() {
   var old = Object.assign({}, r);
   r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
   await dbUpdateInv(r);
+  broadcastInv();
   await logAction('edicion_inv', r.guia,
     'Editó guía: "' + old.guia + '" → "' + r.guia + '" | Bodega: "' + old.bodega + '" → "' + r.bodega + '" | PIN: "' + old.pin + '" → "' + r.pin + '"');
   closeEditInv(); renderInv();
@@ -760,6 +757,7 @@ async function addContabilidad() {
   if (newId) {
     item.id = newId;
     renderCont(); /* re-renderizar con el ID real para que el botón editar funcione */
+    broadcastCont();
   } else {
     contData = contData.filter(function (r) { return r !== item; });
     renderCont();
@@ -776,6 +774,7 @@ async function delCont(id) {
   if (!ok) return;
   contData = contData.filter(function (r) { return r.id !== id; });
   await dbDeleteCont(id);
+  broadcastCont();
   await logAction('eliminacion_cont', rec.equipo,
     'Eliminó registro contable | Equipo: ' + rec.equipo + ' | Fecha: ' + rec.fecha + ' | Total: ' + fmt(rec.total));
   renderCont();
@@ -852,6 +851,7 @@ async function confirmEditCont() {
   r.fecha  = new Date(fecha).toLocaleString('es-CO');
   r.equipo = equipo; r.valorM = m; r.valorB = b; r.total = m + b; r.denoms = denoms;
   await dbUpdateCont(r);
+  broadcastCont();
   await logAction('edicion_cont', r.equipo,
     'Editó registro contable "' + r.equipo + '" | Total: ' + fmt(oldTotal) + ' → ' + fmt(r.total));
   closeEditCont(); renderCont();
