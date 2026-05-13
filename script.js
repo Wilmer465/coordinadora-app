@@ -15,49 +15,6 @@ var isAdmin      = function () { return currentRole === 'admin' || currentRole =
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 
 /* ══════════════════════════════════════════════════════════════════
-    CIERRE AUTOMÁTICO POR INACTIVIDAD (10 minutos)
-   ══════════════════════════════════════════════════════════════════ */
-var _inactivityTimer  = null;
-var _warningTimer     = null;
-var _INACTIVITY_MS    = 10 * 60 * 1000;   // 10 minutos
-var _WARNING_MS       =  9 * 60 * 1000;   //  9 minutos → aviso 1 min antes
-
-function _resetInactivity() {
-  clearTimeout(_inactivityTimer);
-  clearTimeout(_warningTimer);
-
-  _warningTimer = setTimeout(function () {
-    if (!currentUser) return;
-    if (confirm('¿Sigues ahí? La sesión se cerrará en 1 minuto por inactividad.')) {
-      _resetInactivity();   // el usuario confirmó → reiniciar
-    }
-  }, _WARNING_MS);
-
-  _inactivityTimer = setTimeout(function () {
-    if (!currentUser) return;
-    alert('Sesión cerrada por inactividad.');
-    doLogout();
-  }, _INACTIVITY_MS);
-}
-
-function startInactivityWatch() {
-  ['mousemove','mousedown','keydown','touchstart','scroll','click']
-    .forEach(function (evt) {
-      document.addEventListener(evt, _resetInactivity, { passive: true });
-    });
-  _resetInactivity();
-}
-
-function stopInactivityWatch() {
-  clearTimeout(_inactivityTimer);
-  clearTimeout(_warningTimer);
-  ['mousemove','mousedown','keydown','touchstart','scroll','click']
-    .forEach(function (evt) {
-      document.removeEventListener(evt, _resetInactivity);
-    });
-}
-
-/* ══════════════════════════════════════════════════════════════════
     REALTIME — Sincronización en vivo
    ══════════════════════════════════════════════════════════════════ */
 
@@ -541,7 +498,6 @@ async function doLogin() {
 
     console.log('paso 4: entrando a la app...');
     enterApp();
-    startInactivityWatch();
 
   } catch (e) {
     err.style.display = 'block';
@@ -552,8 +508,6 @@ async function doLogin() {
   }
 }
 
-stopInactivityWatch();
-showScreen('screen-login');
 function doLogout() {
   var open = sessionLog.find(function (s) { return s.user === currentUser && !s.salida; });
   if (open) {
