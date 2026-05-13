@@ -13,7 +13,7 @@ var fmt    = function (n) { return '$' + Number(n).toLocaleString('es-CO'); };
 var nowStr = function () { return new Date().toLocaleString('es-CO'); };
 var isAdmin      = function () { return currentRole === 'admin' || currentRole === 'superadmin'; };
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
-var isUsuario   = function () { return currentRole === 'usuario'; };
+var isUsuario    = function () { return currentRole === 'usuario'; };
 
 /* ══════════════════════════════════════════════════════════════════
     REALTIME — Sincronización en vivo
@@ -469,12 +469,11 @@ function enterApp() {
   });
 }
 
-/* ── Restricciones visuales para usuarios ───────────────────── */
+/* ── Restricciones visuales para usuarios ────────────────────── */
 function applyUsuarioRestrictions() {
   if (!isUsuario()) return;
-  /* Ocultar formularios de agregar en inventario y contabilidad */
+  /* Ocultar formularios de agregar en contabilidad */
   var idsToHide = [
-    'add-inv-section', 'inv-add-section', 'inv-form', 'form-inv',
     'add-cont-section', 'cont-add-section', 'cont-form', 'form-cont'
   ];
   idsToHide.forEach(function (id) {
@@ -586,7 +585,6 @@ function getDupGuias() {
 }
 
 async function toggleEstado(id) {
-  if (isUsuario()) return; /* Usuario: solo lectura */
   var rec = invData.find(function (r) { return r.id === id; }); if (!rec) return;
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
@@ -596,7 +594,6 @@ async function toggleEstado(id) {
 }
 
 async function addInventario() {
-  if (isUsuario()) { alert('Solo lectura: los usuarios no pueden agregar registros de inventario.'); return; }
   var g = document.getElementById('i-guia').value.trim();
   var b = document.getElementById('i-bodega').value.trim();
   var p = document.getElementById('i-pin').value.trim();
@@ -973,7 +970,7 @@ function renderUList() {
     var canChangeRole = isSuperAdmin() && !isSA && !isMe;
     var canDelete     = isSuperAdmin() && !isSA && !isMe;
     /* ── CAMBIO 2: superadmin no puede editar a otro superadmin ── */
-    var canEdit       = !isUsuario() && (isMe || (isSuperAdmin() && !isSA));
+    var canEdit       = isMe || (isSuperAdmin() && !isSA);
 
     var roleCtrl = '';
     if (isSA) {
@@ -1006,7 +1003,6 @@ function renderUList() {
 /* ── Editar usuario ──────────────────────────────────────────── */
 var _editTarget = null;
 function openEditModal(username) {
-  if (isUsuario()) { alert('Los usuarios no pueden editar su usuario ni contraseña.'); return; }
   if (!isSuperAdmin() && username !== currentUser) { alert('Solo el superadmin puede editar otros usuarios.'); return; }
   /* ── CAMBIO 3: bloquear edición de otro superadmin ── */
   var targetUser = users.find(function (x) { return x.username === username; });
@@ -1030,7 +1026,6 @@ function closeEditModal() { document.getElementById('edit-modal-bg').style.displ
 
 async function confirmEdit() {
   if (!_editTarget) return;
-  if (isUsuario()) { alert('Los usuarios no pueden editar su usuario ni contraseña.'); return; }
   if (!isSuperAdmin() && _editTarget !== currentUser) { alert('Sin permisos.'); return; }
 
   var newName = document.getElementById('edit-name-input').value.trim();
