@@ -1,5 +1,6 @@
-/* ── CLIENTE SUPABASE ─────────────────────────────────────────── */
-/* Las credenciales vienen de config.js (cargado antes en el HTML) */
+/*════════════════════════════════════════════════  
+    CLIENTE SUPABASE
+    ════════════════════════════════════════════════ */
 const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ── ESTADO GLOBAL ────────────────────────────────────────────── */
@@ -13,6 +14,7 @@ var nowStr = function () { return new Date().toLocaleString('es-CO'); };
 var isAdmin      = function () { return currentRole === 'admin' || currentRole === 'superadmin'; };
 var isSuperAdmin = function () { return currentRole === 'superadmin'; };
 var isUsuario    = function () { return currentRole === 'usuario'; };
+
 
 /* ══════════════════════════════════════════════════════════════════
     REALTIME — Sincronización en vivo
@@ -172,7 +174,7 @@ async function dbUpdateUserMeta(username, updates) {
   return error || null;
 }
 
-/* ── CAMBIO 1: dbChangePassword bloquea edición entre superadmins ── */
+/* ── dbChangePassword bloquea edición entre superadmins ── */
 async function dbChangePassword(username, newPassword) {
   /* Verificar si el destino es otro superadmin */
   var targetUser = users.find(function (u) { return u.username === username; });
@@ -968,7 +970,8 @@ function renderUList() {
     var isMe     = u.username === currentUser;
     var canChangeRole = isSuperAdmin() && !isSA && !isMe;
     var canDelete     = isSuperAdmin() && !isSA && !isMe;
-    /* ── CAMBIO 2: superadmin no puede editar a otro superadmin ── */
+
+    /* ── superadmin no puede editar a otro superadmin ── */
     var canEdit       = isMe || (isSuperAdmin() && !isSA);
 
     var roleCtrl = '';
@@ -1003,7 +1006,8 @@ function renderUList() {
 var _editTarget = null;
 function openEditModal(username) {
   if (!isSuperAdmin() && username !== currentUser) { alert('Solo el superadmin puede editar otros usuarios.'); return; }
-  /* ── CAMBIO 3: bloquear edición de otro superadmin ── */
+
+  /* ── bloquear edición de otro superadmin ── */
   var targetUser = users.find(function (x) { return x.username === username; });
   if (targetUser && targetUser.role === 'superadmin' && username !== currentUser) {
     alert('No puedes editar a otro superadmin.');
@@ -1033,7 +1037,7 @@ async function confirmEdit() {
   var oldName = _editTarget;
   var u = users.find(function (x) { return x.username === oldName; }); if (!u) return;
 
-  /* ── CAMBIO 4: bloquear confirmación si el destino es otro superadmin ── */
+  /* ── bloquear confirmación si el destino es otro superadmin ── */
   if (u.role === 'superadmin' && oldName !== currentUser) {
     errEl.textContent = 'No puedes editar a otro superadmin.';
     errEl.style.display = 'block';
