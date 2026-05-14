@@ -1,7 +1,6 @@
 /* ── CLIENTE SUPABASE ─────────────────────────────────────────── */
-const SUPABASE_URL = 'https://llkfdckqovgfguponutg.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_3LLyKJdKoG1ag4bIdDfpQg_IolLFXUQ';
-const _sb = supabase.createClient('https://llkfdckqovgfguponutg.supabase.co', 'sb_publishable_3LLyKJdKoG1ag4bIdDfpQg_IolLFXUQ');
+/* Las credenciales vienen de config.js (cargado antes en el HTML) */
+const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ── ESTADO GLOBAL ────────────────────────────────────────────── */
 var invData = [], contData = [], users = [], sessionLog = [], adminActions = [];
