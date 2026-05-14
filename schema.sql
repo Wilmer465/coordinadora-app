@@ -40,14 +40,14 @@ BEGIN
 
   -- Un superadmin no puede cambiar la contraseña de otro superadmin
   IF public.session_role_app() = 'superadmin'
-     AND v_target_role = 'superadmin'
-     AND public.session_username() <> p_target_user THEN
+      AND v_target_role = 'superadmin'
+      AND public.session_username() <> p_target_user THEN
     RAISE EXCEPTION 'Un superadmin no puede modificar a otro superadmin';
   END IF;
 
   -- Solo el propio usuario o un superadmin puede cambiar contraseñas
   IF public.session_username() <> p_target_user
-     AND public.session_role_app() <> 'superadmin' THEN
+      AND public.session_role_app() <> 'superadmin' THEN
     RAISE EXCEPTION 'Sin permisos para cambiar la contraseña de este usuario';
   END IF;
 
@@ -254,7 +254,7 @@ BEGIN
     WHERE command_tag IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
       AND object_type IN ('table','partitioned table')
   LOOP
-     IF cmd.schema_name IS NOT NULL AND cmd.schema_name IN ('public') AND cmd.schema_name NOT IN ('pg_catalog','information_schema') AND cmd.schema_name NOT LIKE 'pg_toast%' AND cmd.schema_name NOT LIKE 'pg_temp%' THEN
+      IF cmd.schema_name IS NOT NULL AND cmd.schema_name IN ('public') AND cmd.schema_name NOT IN ('pg_catalog','information_schema') AND cmd.schema_name NOT LIKE 'pg_toast%' AND cmd.schema_name NOT LIKE 'pg_temp%' THEN
       BEGIN
         EXECUTE format('alter table if exists %s enable row level security', cmd.object_identity);
         RAISE LOG 'rls_auto_enable: enabled RLS on %', cmd.object_identity;
@@ -262,9 +262,9 @@ BEGIN
         WHEN OTHERS THEN
           RAISE LOG 'rls_auto_enable: failed to enable RLS on %', cmd.object_identity;
       END;
-     ELSE
+      ELSE
         RAISE LOG 'rls_auto_enable: skip % (either system schema or not in enforced list: %.)', cmd.object_identity, cmd.schema_name;
-     END IF;
+      END IF;
   END LOOP;
 END;
 $$;
@@ -586,9 +586,9 @@ COMMENT ON COLUMN "public"."users"."role" IS 'Roles permitidos: operario | admin
 
 
 CREATE OR REPLACE VIEW "public"."users_safe" WITH ("security_invoker"='on') AS
- SELECT "username",
+  SELECT "username",
     "role"
-   FROM "public"."users";
+    FROM "public"."users";
 
 
 ALTER VIEW "public"."users_safe" OWNER TO "postgres";
