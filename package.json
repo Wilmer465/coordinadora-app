@@ -1,0 +1,3 @@
+"dependencies": {
+    "rxdb": "git+https://git@github.com/pubkey/rxdb.git#commitHash"
+}

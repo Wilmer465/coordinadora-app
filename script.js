@@ -3,6 +3,136 @@
     ════════════════════════════════════════════════ */
 const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+
+/* ══════════════════════════════════════════════════════════════════
+    OFFLINE — Caché local con IndexedDB (via localForage)
+    ────────────────────────────────────────────────────────────────
+    Estrategia:
+    • Lectura:   Supabase primero → si falla usa caché local
+    • Escritura: Intenta Supabase → si no hay red encola localmente
+    • Reconexión: flushQueue() sube todos los cambios pendientes
+   ══════════════════════════════════════════════════════════════════ */
+
+var _isOnline   = navigator.onLine;
+var _syncQueued = false;
+var _lf         = window.localforage;
+
+/* ── Indicador visual online / offline ───────────────────────── */
+function _updateOnlineIndicator() {
+  var dot = document.getElementById('offline-dot');
+  if (!dot) {
+    dot = document.createElement('div');
+    dot.id = 'offline-dot';
+    dot.style.cssText =
+      'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);' +
+      'z-index:9999;padding:5px 16px;border-radius:99px;font-size:12px;' +
+      'font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,.18);' +
+      'transition:opacity .4s;pointer-events:none';
+    document.body.appendChild(dot);
+  }
+  if (_isOnline) {
+    dot.textContent = '🟢 Conexión restaurada';
+    dot.style.background = '#e6f4ea';
+    dot.style.color       = '#137333';
+    dot.style.opacity     = '1';
+    setTimeout(function () { dot.style.opacity = '0'; }, 3000);
+  } else {
+    dot.textContent = '🔴 Sin conexión — guardando localmente';
+    dot.style.background = '#fff3cd';
+    dot.style.color       = '#856404';
+    dot.style.opacity     = '1';
+  }
+}
+
+window.addEventListener('online', function () {
+  _isOnline = true;
+  _updateOnlineIndicator();
+  flushQueue();
+});
+window.addEventListener('offline', function () {
+  _isOnline = false;
+  _updateOnlineIndicator();
+});
+
+/* ── Helpers de caché ────────────────────────────────────────── */
+function _cacheSet(key, val) {
+  if (!_lf) return Promise.resolve();
+  return _lf.setItem(key, val).catch(function (e) { console.warn('Cache error:', e); });
+}
+function _cacheGet(key) {
+  if (!_lf) return Promise.resolve(null);
+  return _lf.getItem(key).catch(function () { return null; });
+}
+
+/* ── Cola de operaciones pendientes ──────────────────────────── */
+async function _getQueue() {
+  return (await _cacheGet('pending_queue')) || [];
+}
+
+async function _addToQueue(op) {
+  var queue = await _getQueue();
+  op.ts = Date.now();
+  queue.push(op);
+  await _cacheSet('pending_queue', queue);
+  var label = (op.data && (op.data.guia || op.data.equipo)) || op.id || '';
+  console.log('[Offline] Encolado:', op.op, op.table, label);
+}
+
+async function flushQueue() {
+  if (_syncQueued || !_isOnline) return;
+  _syncQueued = true;
+  try {
+    var queue = await _getQueue();
+    if (!queue.length) return;
+    console.log('[Offline] Sincronizando', queue.length, 'operación(es)…');
+    var failed = [];
+    for (var i = 0; i < queue.length; i++) {
+      var op = queue[i];
+      try {
+        var tbl = op.table === 'inv' ? 'inventario' : 'contabilidad';
+        if      (op.op === 'insert') { await _sb.from(tbl).insert(op.data); }
+        else if (op.op === 'update') { await _sb.from(tbl).update(op.data).eq('id', op.id); }
+        else if (op.op === 'delete') { await _sb.from(tbl).delete().eq('id', op.id); }
+      } catch (e) {
+        console.warn('[Offline] Falló op:', op, e);
+        failed.push(op);
+      }
+    }
+    await _cacheSet('pending_queue', failed);
+    if (!failed.length) {
+      console.log('[Offline] Sincronización completa ✓');
+    } else {
+      console.warn('[Offline]', failed.length, 'operación(es) sin sincronizar.');
+    }
+    /* Refrescar datos desde Supabase */
+    var results = await Promise.all([dbLoadInv(), dbLoadCont()]);
+    invData  = results[0];
+    contData = results[1];
+    renderInv(); renderCont(); renderDash();
+  } finally {
+    _syncQueued = false;
+  }
+}
+
+/* ── Contar pendientes y mostrar badge ───────────────────────── */
+async function _updatePendingBadge() {
+  var queue = await _getQueue();
+  var badge = document.getElementById('pending-badge');
+  if (!queue.length) { if (badge) badge.style.display = 'none'; return; }
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'pending-badge';
+    badge.style.cssText =
+      'position:fixed;top:14px;right:16px;z-index:9998;' +
+      'background:#f59e0b;color:#fff;border-radius:99px;' +
+      'font-size:11px;font-weight:700;padding:3px 10px;' +
+      'box-shadow:0 2px 6px rgba(0,0,0,.2)';
+    document.body.appendChild(badge);
+  }
+  badge.textContent = queue.length + ' cambio' + (queue.length !== 1 ? 's' : '') + ' pendiente' + (queue.length !== 1 ? 's' : '');
+  badge.style.display = 'block';
+}
+
 /* ── ESTADO GLOBAL ────────────────────────────────────────────── */
 var invData = [], contData = [], users = [], sessionLog = [], adminActions = [];
 var currentUser = null, currentRole = null;
@@ -81,56 +211,128 @@ function actionToDb(r)   { return { id: r.id, type: r.type, by: r.by, affected: 
 
 /* ── Inventario — CRUD ────────────────────────────────────────── */
 async function dbLoadInv() {
-  var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
-  if (error) { console.error('Error cargando inventario:', error); return []; }
-  return (data || []).map(invFromDb);
+  if (_isOnline) {
+    var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
+    if (!error && data) {
+      var mapped = data.map(invFromDb);
+      _cacheSet('inv_cache', mapped);   /* actualizar caché local */
+      return mapped;
+    }
+  }
+  /* Offline o error de red: usar caché */
+  var cached = await _cacheGet('inv_cache');
+  if (cached && cached.length) {
+    console.log('[Offline] Inventario desde caché (' + cached.length + ' registros)');
+    return cached;
+  }
+  return [];
 }
 
 async function dbInsertInv(item) {
-  var { data, error } = await _sb.from('inventario')
-    .insert({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado || 'pendiente', fecha: item.fecha })
-    .select('id').single();
-  if (error) { console.error('Error insertando inventario:', error); return null; }
-  return data ? data.id : null;
+  var dbItem = { guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado || 'pendiente', fecha: item.fecha };
+  if (_isOnline) {
+    var { data, error } = await _sb.from('inventario').insert(dbItem).select('id').single();
+    if (!error && data) {
+      /* Actualizar caché */
+      var cached = (await _cacheGet('inv_cache')) || [];
+      cached.unshift(Object.assign({}, item, { id: data.id }));
+      _cacheSet('inv_cache', cached);
+      return data.id;
+    }
+  }
+  /* Offline: encolar y devolver ID temporal */
+  var tempId = 'pend_' + Date.now();
+  await _addToQueue({ op: 'insert', table: 'inv', data: dbItem, tempId: tempId });
+  await _updatePendingBadge();
+  return tempId;   /* ID temporal — se reemplaza al sincronizar */
 }
 
 async function dbUpdateInv(item) {
-  var { error } = await _sb.from('inventario')
-    .update({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha })
-    .eq('id', item.id);
-  if (error) console.error('Error actualizando inventario:', error);
+  var dbItem = { guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha };
+  /* Actualizar caché local siempre */
+  var cached = (await _cacheGet('inv_cache')) || [];
+  _cacheSet('inv_cache', cached.map(function (r) { return r.id === item.id ? Object.assign({}, r, item) : r; }));
+  if (_isOnline) {
+    var { error } = await _sb.from('inventario').update(dbItem).eq('id', item.id);
+    if (error) console.error('Error actualizando inventario:', error);
+    return;
+  }
+  await _addToQueue({ op: 'update', table: 'inv', id: item.id, data: dbItem });
+  await _updatePendingBadge();
 }
 
 async function dbDeleteInv(id) {
-  var { error } = await _sb.from('inventario').delete().eq('id', id);
-  if (error) console.error('Error eliminando inventario:', error);
+  /* Actualizar caché local siempre */
+  var cached = (await _cacheGet('inv_cache')) || [];
+  _cacheSet('inv_cache', cached.filter(function (r) { return r.id !== id; }));
+  if (_isOnline) {
+    var { error } = await _sb.from('inventario').delete().eq('id', id);
+    if (error) console.error('Error eliminando inventario:', error);
+    return;
+  }
+  await _addToQueue({ op: 'delete', table: 'inv', id: id });
+  await _updatePendingBadge();
 }
 
 /* ── Contabilidad — CRUD ──────────────────────────────────────── */
 async function dbLoadCont() {
-  var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
-  if (error) { console.error('Error cargando contabilidad:', error); return []; }
-  return (data || []).map(contFromDb);
+  if (_isOnline) {
+    var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
+    if (!error && data) {
+      var mapped = data.map(contFromDb);
+      _cacheSet('cont_cache', mapped);   /* actualizar caché local */
+      return mapped;
+    }
+  }
+  /* Offline o error de red: usar caché */
+  var cached = await _cacheGet('cont_cache');
+  if (cached && cached.length) {
+    console.log('[Offline] Contabilidad desde caché (' + cached.length + ' registros)');
+    return cached;
+  }
+  return [];
 }
 
 async function dbInsertCont(item) {
-  var { data, error } = await _sb.from('contabilidad')
-    .insert({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
-    .select('id').single();
-  if (error) { console.error('Error insertando contabilidad:', error); return null; }
-  return data ? data.id : null;
+  var dbItem = { fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null };
+  if (_isOnline) {
+    var { data, error } = await _sb.from('contabilidad').insert(dbItem).select('id').single();
+    if (!error && data) {
+      var cached = (await _cacheGet('cont_cache')) || [];
+      cached.unshift(Object.assign({}, item, { id: data.id }));
+      _cacheSet('cont_cache', cached);
+      return data.id;
+    }
+  }
+  var tempId = 'pend_' + Date.now();
+  await _addToQueue({ op: 'insert', table: 'cont', data: dbItem, tempId: tempId });
+  await _updatePendingBadge();
+  return tempId;
 }
 
 async function dbUpdateCont(item) {
-  var { error } = await _sb.from('contabilidad')
-    .update({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
-    .eq('id', item.id);
-  if (error) console.error('Error actualizando contabilidad:', error);
+  var dbItem = { fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null };
+  var cached = (await _cacheGet('cont_cache')) || [];
+  _cacheSet('cont_cache', cached.map(function (r) { return r.id === item.id ? Object.assign({}, r, item) : r; }));
+  if (_isOnline) {
+    var { error } = await _sb.from('contabilidad').update(dbItem).eq('id', item.id);
+    if (error) console.error('Error actualizando contabilidad:', error);
+    return;
+  }
+  await _addToQueue({ op: 'update', table: 'cont', id: item.id, data: dbItem });
+  await _updatePendingBadge();
 }
 
 async function dbDeleteCont(id) {
-  var { error } = await _sb.from('contabilidad').delete().eq('id', id);
-  if (error) console.error('Error eliminando contabilidad:', error);
+  var cached = (await _cacheGet('cont_cache')) || [];
+  _cacheSet('cont_cache', cached.filter(function (r) { return r.id !== id; }));
+  if (_isOnline) {
+    var { error } = await _sb.from('contabilidad').delete().eq('id', id);
+    if (error) console.error('Error eliminando contabilidad:', error);
+    return;
+  }
+  await _addToQueue({ op: 'delete', table: 'cont', id: id });
+  await _updatePendingBadge();
 }
 
 /* ── Usuarios — CRUD ──────────────────────────────────────────── */
@@ -245,6 +447,15 @@ async function loadAll() {
   }
 
   showScreen('screen-login');
+
+  /* Precargar caché local inmediatamente (sin esperar red) */
+  var cachedInv  = await _cacheGet('inv_cache');
+  var cachedCont = await _cacheGet('cont_cache');
+  if (cachedInv)  invData  = cachedInv;
+  if (cachedCont) contData = cachedCont;
+
+  /* Mostrar badge de pendientes si los hay */
+  _updatePendingBadge();
 
   var savedUser = sessGet('sess_v9');
   var savedRole = sessGet('role_v9');
@@ -615,8 +826,14 @@ async function addInventario() {
   var newId = await dbInsertInv(item);
   if (newId) {
     item.id = newId;
-    renderInv(); /* re-renderizar con el ID real para que el botón editar funcione */
-    broadcastInv();
+    var isPending = typeof newId === 'string' && newId.startsWith('pend_');
+    renderInv();
+    if (isPending) {
+      /* Offline: registro guardado localmente, se subirá al reconectar */
+      alert('Sin conexión. La guía \"' + g + '\" se guardó localmente y se subirá automáticamente al recuperar internet.');
+    } else {
+      broadcastInv();
+    }
   } else {
     invData = invData.filter(function (r) { return r !== item; });
     renderInv();
@@ -756,8 +973,13 @@ async function addContabilidad() {
   var newId = await dbInsertCont(item);
   if (newId) {
     item.id = newId;
-    renderCont(); /* re-renderizar con el ID real para que el botón editar funcione */
-    broadcastCont();
+    var isPending = typeof newId === 'string' && newId.startsWith('pend_');
+    renderCont();
+    if (isPending) {
+      alert('Sin conexión. El registro de \"' + equipo + '\" se guardó localmente y se subirá automáticamente al recuperar internet.');
+    } else {
+      broadcastCont();
+    }
   } else {
     contData = contData.filter(function (r) { return r !== item; });
     renderCont();

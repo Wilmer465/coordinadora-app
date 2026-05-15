@@ -7,6 +7,7 @@
     <link rel="icon" href="logo.png">
     <title>Coordinadora — Inventario & Contabilidad</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
     <script src="config.js"></script>
 
 </head>
@@ -129,7 +130,6 @@
             <button class="fest-btn" id="fest-no_entregado" onclick="setFiltroEstado('no_entregado')">No entregado</button>
           </div>
         </div>
-
         <!-- FILTRO POR BODEGA (se genera dinámicamente desde JS) -->
         <div id="bodega-filtros" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:.9rem;align-items:center"></div>
 
