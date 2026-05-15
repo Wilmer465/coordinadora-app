@@ -327,9 +327,10 @@ function switchAdminTab(t) {
     document.getElementById('atab-' + k[0]).classList.toggle('active', k === t);
   });
   if (t === 'usuarios') {
-    _sb.rpc('set_session_user', { p_username: currentUser, p_role: currentRole })
-      .then(function () { return dbLoadUsers(); })
-      .then(function (data) { users = data; renderUList(); });
+    renderUList(); /* mostrar caché inmediatamente */
+    dbLoadUsers().then(function (data) {
+      if (data && data.length) { users = data; renderUList(); }
+    });
   }
   if (t === 'sesiones') renderLog();
   if (t === 'acciones') renderAcciones();
@@ -535,30 +536,39 @@ function renderBodegaFiltros() {
   var cont = document.getElementById('bodega-filtros');
   if (!cont) return;
 
-  /* Obtener bodegas únicas ordenadas, ignorando '—' */
   var bodegas = [];
   invData.forEach(function (r) {
-    if (r.bodega && r.bodega !== '—' && bodegas.indexOf(r.bodega) === -1) {
+    if (r.bodega && r.bodega !== '\u2014' && bodegas.indexOf(r.bodega) === -1) {
       bodegas.push(r.bodega);
     }
   });
-  bodegas.sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); });
-
-  /* Si no hay bodegas, ocultar el contenedor */
-  if (!bodegas.length) { cont.style.display = 'none'; return; }
-  cont.style.display = '';
-
-  var btns = '<button class="sort-btn' + (invFiltroBodega === 'todas' ? ' active' : '') + '" onclick="setFiltroBodega(\'todas\')">Todas</button>';
-  bodegas.forEach(function (bod) {
-    var active = invFiltroBodega === bod ? ' active' : '';
-    btns += '<button class="sort-btn' + active + '" onclick="setFiltroBodega(\'' + bod.replace(/'/g, "\\'") + '\')">' + bod + '</button>';
+  bodegas.sort(function (a, b) {
+    return String(a).localeCompare(String(b), undefined, { numeric: true });
   });
-  cont.innerHTML = btns;
+
+  if (!bodegas.length) { cont.style.display = 'none'; return; }
+  cont.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:.9rem';
+
+  var todasCls = invFiltroBodega === 'todas' ? 'fest-btn active' : 'fest-btn';
+  var html = '<span style="font-size:12px;color:var(--text2);font-weight:500">Bodega:</span>';
+  html += '<button class="' + todasCls + '" onclick="setFiltroBodega(\'todas\')">Todas</button>';
+  bodegas.forEach(function (bod) {
+    var cls = invFiltroBodega === bod ? 'fest-btn active' : 'fest-btn';
+    html += '<button class="' + cls + '" onclick="setFiltroBodega(\'' + String(bod).replace(/'/g, "\\'") + '\')">' + bod + '</button>';
+  });
+  cont.innerHTML = html;
 }
 
 function getSorted(rows) {
   var arr = rows.slice();
-  if (invSort === 'pin') {
+  if (invSort === 'bodega') {
+    arr.sort(function (a, b) {
+      if (a.bodega === '—' && b.bodega === '—') return 0;
+      if (a.bodega === '—') return 1;
+      if (b.bodega === '—') return -1;
+      return String(a.bodega).localeCompare(String(b.bodega), undefined, { numeric: true });
+    });
+  } else if (invSort === 'pin') {
     arr.sort(function (a, b) { return String(a.pin).localeCompare(String(b.pin), undefined, { numeric: true }); });
   } else if (invSort === 'fecha') {
     arr.sort(function (a, b) {
