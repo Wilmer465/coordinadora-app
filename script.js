@@ -3,64 +3,42 @@
     ════════════════════════════════════════════════ */
 const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-
-/* ══════════════════════════════════════════════════════════════════
-    OFFLINE — Caché local con IndexedDB (via localForage)
-   ══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════
+    OFFLINE — IndexedDB via localForage
+   ══════════════════════════════════════════════════════ */
 var _syncQueued = false;
-var _lf         = window.localforage;
+var _lf = window.localforage;
 
 function _updateOnlineIndicator() {
   var dot = document.getElementById('offline-dot');
   if (!dot) {
-    dot = document.createElement('div');
-    dot.id = 'offline-dot';
-    dot.style.cssText =
-      'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);' +
-      'z-index:9999;padding:5px 16px;border-radius:99px;font-size:12px;' +
-      'font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,.18);' +
-      'transition:opacity .4s;pointer-events:none';
+    dot = document.createElement('div'); dot.id = 'offline-dot';
+    dot.style.cssText = 'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);' +
+      'z-index:9999;padding:5px 16px;border-radius:99px;font-size:12px;font-weight:600;' +
+      'box-shadow:0 2px 10px rgba(0,0,0,.18);transition:opacity .4s;pointer-events:none';
     document.body.appendChild(dot);
   }
   if (navigator.onLine) {
-    dot.textContent = '\uD83D\uDFE2 Conexión restaurada';
-    dot.style.background = '#e6f4ea'; dot.style.color = '#137333';
-    dot.style.opacity = '1';
+    dot.textContent = '🟢 Conexión restaurada';
+    dot.style.background = '#e6f4ea'; dot.style.color = '#137333'; dot.style.opacity = '1';
     setTimeout(function () { dot.style.opacity = '0'; }, 3000);
   } else {
-    dot.textContent = '\uD83D\uDD34 Sin conexión — guardando localmente';
-    dot.style.background = '#fff3cd'; dot.style.color = '#856404';
-    dot.style.opacity = '1';
+    dot.textContent = '🔴 Sin conexión — guardando localmente';
+    dot.style.background = '#fff3cd'; dot.style.color = '#856404'; dot.style.opacity = '1';
   }
 }
-
 window.addEventListener('online',  function () { _updateOnlineIndicator(); flushQueue(); });
 window.addEventListener('offline', function () { _updateOnlineIndicator(); });
+setInterval(async function () { if (navigator.onLine) { var q = await _getQueue(); if (q.length) flushQueue(); } }, 30000);
 
-setInterval(async function () {
-  if (!navigator.onLine) return;
-  var q = await _getQueue();
-  if (q.length) flushQueue();
-}, 30000);
+function _cacheSet(k, v) { return _lf ? _lf.setItem(k, v).catch(function(){}) : Promise.resolve(); }
+function _cacheGet(k)    { return _lf ? _lf.getItem(k).catch(function(){ return null; }) : Promise.resolve(null); }
 
-function _cacheSet(key, val) {
-  if (!_lf) return Promise.resolve();
-  return _lf.setItem(key, val).catch(function (e) { console.warn('Cache:', e); });
-}
-function _cacheGet(key) {
-  if (!_lf) return Promise.resolve(null);
-  return _lf.getItem(key).catch(function () { return null; });
-}
-
-async function _getQueue() {
-  return (await _cacheGet('pending_queue')) || [];
-}
+async function _getQueue() { return (await _cacheGet('pending_queue')) || []; }
 
 async function _addToQueue(op) {
   op.ts = Date.now(); op.user = currentUser; op.role = currentRole;
-  var queue = await _getQueue();
-  queue.push(op);
-  await _cacheSet('pending_queue', queue);
+  var q = await _getQueue(); q.push(op); await _cacheSet('pending_queue', q);
   console.log('[Offline] Encolado:', op.op, op.table);
 }
 
@@ -68,11 +46,11 @@ async function flushQueue() {
   if (_syncQueued || !navigator.onLine) return;
   _syncQueued = true;
   var badge = document.getElementById('pending-badge');
-  if (badge) { badge.textContent = '\u23F3 Sincronizando\u2026'; badge.style.cursor = 'default'; }
+  if (badge) { badge.textContent = '⏳ Sincronizando…'; badge.style.cursor = 'default'; }
   try {
     var queue = await _getQueue();
     if (!queue.length) { await _updatePendingBadge(); return; }
-    console.log('[Offline] Sincronizando', queue.length, 'op(s)\u2026');
+    console.log('[Offline] Sincronizando', queue.length, 'op(s)…');
     var failed = [];
     for (var i = 0; i < queue.length; i++) {
       var op = queue[i];
@@ -86,12 +64,20 @@ async function flushQueue() {
         else if (op.op === 'delete') res = await _sb.from(tbl).delete().eq('id', op.id);
         if (res && res.error) { console.error('[Offline] Error:', res.error); failed.push(op); }
         else console.log('[Offline] ✓', op.op, op.table);
-      } catch (e) { console.warn('[Offline] Excepción:', e); failed.push(op); }
+      } catch(e) { console.warn('[Offline] Excepción:', e); failed.push(op); }
     }
     await _cacheSet('pending_queue', failed);
+
+    /* ✅ FIX DUPLICADOS: limpiar pend_* del caché ANTES de recargar
+       de Supabase — así dbLoadInv no mezcla items ya subidos */
+    var ic = (await _cacheGet('inv_cache'))  || [];
+    var cc = (await _cacheGet('cont_cache')) || [];
+    await _cacheSet('inv_cache',  ic.filter(function(r){ return typeof r.id !== 'string' || !r.id.startsWith('pend_'); }));
+    await _cacheSet('cont_cache', cc.filter(function(r){ return typeof r.id !== 'string' || !r.id.startsWith('pend_'); }));
+
     var r = await Promise.all([dbLoadInv(), dbLoadCont()]);
     invData = r[0]; contData = r[1];
-    invData.forEach(function (x) { if (!x.estado) x.estado = 'pendiente'; });
+    invData.forEach(function(x){ if (!x.estado) x.estado = 'pendiente'; });
     renderInv(); renderCont(); renderDash();
     await _updatePendingBadge();
   } finally { _syncQueued = false; }
@@ -102,21 +88,18 @@ async function _updatePendingBadge() {
   var badge = document.getElementById('pending-badge');
   if (!queue.length) { if (badge) badge.style.display = 'none'; return; }
   if (!badge) {
-    badge = document.createElement('div');
-    badge.id = 'pending-badge';
-    badge.style.cssText =
-      'position:fixed;top:10px;right:16px;z-index:9998;' +
-      'background:#f59e0b;color:#fff;border-radius:99px;' +
-      'font-size:11px;font-weight:700;padding:4px 12px;' +
+    badge = document.createElement('div'); badge.id = 'pending-badge';
+    badge.style.cssText = 'position:fixed;top:10px;right:16px;z-index:9998;background:#f59e0b;' +
+      'color:#fff;border-radius:99px;font-size:11px;font-weight:700;padding:4px 12px;' +
       'box-shadow:0 2px 6px rgba(0,0,0,.25);cursor:pointer;transition:background .2s';
     badge.title = 'Clic para sincronizar ahora';
-    badge.onmouseenter = function () { badge.style.background = '#d97706'; };
-    badge.onmouseleave = function () { badge.style.background = '#f59e0b'; };
-    badge.onclick = function () { flushQueue(); };
+    badge.onmouseenter = function(){ badge.style.background='#d97706'; };
+    badge.onmouseleave = function(){ badge.style.background='#f59e0b'; };
+    badge.onclick = function(){ flushQueue(); };
     document.body.appendChild(badge);
   }
   var n = queue.length;
-  badge.textContent = '\u2B06 ' + n + ' cambio' + (n !== 1 ? 's' : '') + ' pendiente' + (n !== 1 ? 's' : '') + ' \u2014 clic para subir';
+  badge.textContent = '⬆ ' + n + ' cambio' + (n!==1?'s':'') + ' pendiente' + (n!==1?'s':'') + ' — clic para subir';
   badge.style.display = 'block'; badge.style.cursor = 'pointer'; badge.style.background = '#f59e0b';
 }
 
@@ -148,32 +131,28 @@ function initRealtime() {
   _broadcastChannel = _sb.channel('app-sync', { config: { broadcast: { self: false } } })
     .on('broadcast', { event: 'inv-change' }, function () {
       if (!navigator.onLine) return;
-      _getQueue().then(function (q) {
-        if (q.some(function (op) { return op.table === 'inv'; })) return;
-        dbLoadInv().then(function (d) { invData = d; renderInv(); renderDash(); });
+      _getQueue().then(function(q) {
+        if (q.some(function(op){ return op.table === 'inv'; })) return;
+        dbLoadInv().then(function(d){ invData=d; renderInv(); renderDash(); });
       });
     })
     .on('broadcast', { event: 'cont-change' }, function () {
       if (!navigator.onLine) return;
-      _getQueue().then(function (q) {
-        if (q.some(function (op) { return op.table === 'cont'; })) return;
-        dbLoadCont().then(function (d) { contData = d; renderCont(); renderDash(); });
+      _getQueue().then(function(q) {
+        if (q.some(function(op){ return op.table === 'cont'; })) return;
+        dbLoadCont().then(function(d){ contData=d; renderCont(); renderDash(); });
       });
     })
     .subscribe(function (s) { console.log('Realtime:', s); });
 
-  /* Polling cada 5 s — solo si hay internet y no hay pendientes */
+  /* Polling cada 5 s — solo online y sin pendientes */
   _pollInterval = setInterval(function () {
-    if (!currentUser)      return;
-    if (!navigator.onLine) return;
-    _getQueue().then(function (q) {
+    if (!currentUser || !navigator.onLine) return;
+    _getQueue().then(function(q) {
       if (q.length) return;
       Promise.all([ dbLoadInv(), dbLoadCont() ])
-        .then(function (r) {
-          invData  = r[0]; contData = r[1];
-          renderInv(); renderCont(); renderDash();
-        })
-        .catch(function (e) { console.warn('Poll error:', e); });
+        .then(function(r) { invData=r[0]; contData=r[1]; renderInv(); renderCont(); renderDash(); })
+        .catch(function(e) { console.warn('Poll error:', e); });
     });
   }, 5000);
 
@@ -211,16 +190,20 @@ async function dbLoadInv() {
     var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
     if (!error && data) {
       var fromSrv = data.map(invFromDb);
-      /* Conservar pend_* que aún no se han subido */
+      /* Solo conservar pend_* que aún están en la cola */
+      var queue   = await _getQueue();
       var cached  = (await _cacheGet('inv_cache')) || [];
-      var pending = cached.filter(function (r) { return typeof r.id === 'string' && r.id.startsWith('pend_'); });
-      var merged  = pending.concat(fromSrv);
+      var pending = cached.filter(function(r) {
+        return typeof r.id === 'string' && r.id.startsWith('pend_') &&
+               queue.some(function(op){ return op.table === 'inv' && op.op === 'insert'; });
+      });
+      var merged = pending.concat(fromSrv);
       _cacheSet('inv_cache', merged);
       return merged;
     }
   }
   var cached = await _cacheGet('inv_cache');
-  if (cached && cached.length) { console.log('[Offline] inv caché', cached.length); return cached; }
+  if (cached && cached.length) { console.log('[Offline] inv caché:', cached.length); return cached; }
   return [];
 }
 
@@ -230,43 +213,41 @@ async function dbInsertInv(item) {
     var { data, error } = await _sb.from('inventario').insert(dbItem).select('id').single();
     if (!error && data) {
       var cached = (await _cacheGet('inv_cache')) || [];
-      _cacheSet('inv_cache', cached.map(function (r) { return r === item ? Object.assign({}, item, { id: data.id }) : r; }));
+      _cacheSet('inv_cache', cached.map(function(r){ return r === item ? Object.assign({}, item, { id: data.id }) : r; }));
       return data.id;
     }
   }
   var tempId = 'pend_' + Date.now();
   await _addToQueue({ op: 'insert', table: 'inv', data: dbItem });
-  var cached2 = (await _cacheGet('inv_cache')) || [];
-  /* Reemplazar el item (que tiene id:null) por uno con tempId en caché */
+  var c2 = (await _cacheGet('inv_cache')) || [];
   var found = false;
-  var updated = cached2.map(function (r) {
-    if (!found && r.guia === item.guia && r.id === null) { found = true; return Object.assign({}, r, { id: tempId }); }
-    return r;
-  });
-  if (!found) updated.unshift(Object.assign({}, item, { id: tempId }));
-  _cacheSet('inv_cache', updated);
+  c2 = c2.map(function(r){ if (!found && r.guia === item.guia && r.id === null){ found=true; return Object.assign({},r,{id:tempId}); } return r; });
+  if (!found) c2.unshift(Object.assign({}, item, { id: tempId }));
+  _cacheSet('inv_cache', c2);
   await _updatePendingBadge();
   return tempId;
 }
 
 async function dbUpdateInv(item) {
   var dbItem = { guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha };
-  var cached = (await _cacheGet('inv_cache')) || [];
-  _cacheSet('inv_cache', cached.map(function (r) { return r.id === item.id ? Object.assign({}, r, item) : r; }));
+  var c = (await _cacheGet('inv_cache')) || [];
+  _cacheSet('inv_cache', c.map(function(r){ return r.id === item.id ? Object.assign({},r,item) : r; }));
   if (navigator.onLine) {
     var { error } = await _sb.from('inventario').update(dbItem).eq('id', item.id);
-    if (error) console.error('Error actualizando inv:', error); return;
+    if (error) console.error('Error actualizando inv:', error);
+    return;
   }
   await _addToQueue({ op: 'update', table: 'inv', id: item.id, data: dbItem });
   await _updatePendingBadge();
 }
 
 async function dbDeleteInv(id) {
-  var cached = (await _cacheGet('inv_cache')) || [];
-  _cacheSet('inv_cache', cached.filter(function (r) { return r.id !== id; }));
+  var c = (await _cacheGet('inv_cache')) || [];
+  _cacheSet('inv_cache', c.filter(function(r){ return r.id !== id; }));
   if (navigator.onLine) {
     var { error } = await _sb.from('inventario').delete().eq('id', id);
-    if (error) console.error('Error eliminando inv:', error); return;
+    if (error) console.error('Error eliminando inv:', error);
+    return;
   }
   await _addToQueue({ op: 'delete', table: 'inv', id: id });
   await _updatePendingBadge();
@@ -278,15 +259,19 @@ async function dbLoadCont() {
     var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
     if (!error && data) {
       var fromSrv = data.map(contFromDb);
+      var queue   = await _getQueue();
       var cached  = (await _cacheGet('cont_cache')) || [];
-      var pending = cached.filter(function (r) { return typeof r.id === 'string' && r.id.startsWith('pend_'); });
-      var merged  = pending.concat(fromSrv);
+      var pending = cached.filter(function(r) {
+        return typeof r.id === 'string' && r.id.startsWith('pend_') &&
+               queue.some(function(op){ return op.table === 'cont' && op.op === 'insert'; });
+      });
+      var merged = pending.concat(fromSrv);
       _cacheSet('cont_cache', merged);
       return merged;
     }
   }
   var cached = await _cacheGet('cont_cache');
-  if (cached && cached.length) { console.log('[Offline] cont caché', cached.length); return cached; }
+  if (cached && cached.length) { console.log('[Offline] cont caché:', cached.length); return cached; }
   return [];
 }
 
@@ -295,43 +280,42 @@ async function dbInsertCont(item) {
   if (navigator.onLine) {
     var { data, error } = await _sb.from('contabilidad').insert(dbItem).select('id').single();
     if (!error && data) {
-      var cached = (await _cacheGet('cont_cache')) || [];
-      _cacheSet('cont_cache', cached.map(function (r) { return r === item ? Object.assign({}, item, { id: data.id }) : r; }));
+      var c = (await _cacheGet('cont_cache')) || [];
+      _cacheSet('cont_cache', c.map(function(r){ return r === item ? Object.assign({}, item, { id: data.id }) : r; }));
       return data.id;
     }
   }
   var tempId = 'pend_' + Date.now();
   await _addToQueue({ op: 'insert', table: 'cont', data: dbItem });
-  var cached2 = (await _cacheGet('cont_cache')) || [];
+  var c2 = (await _cacheGet('cont_cache')) || [];
   var found = false;
-  var updated = cached2.map(function (r) {
-    if (!found && r.equipo === item.equipo && r.id === null) { found = true; return Object.assign({}, r, { id: tempId }); }
-    return r;
-  });
-  if (!found) updated.unshift(Object.assign({}, item, { id: tempId }));
-  _cacheSet('cont_cache', updated);
+  c2 = c2.map(function(r){ if (!found && r.equipo === item.equipo && r.id === null){ found=true; return Object.assign({},r,{id:tempId}); } return r; });
+  if (!found) c2.unshift(Object.assign({}, item, { id: tempId }));
+  _cacheSet('cont_cache', c2);
   await _updatePendingBadge();
   return tempId;
 }
 
 async function dbUpdateCont(item) {
   var dbItem = { fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null };
-  var cached = (await _cacheGet('cont_cache')) || [];
-  _cacheSet('cont_cache', cached.map(function (r) { return r.id === item.id ? Object.assign({}, r, item) : r; }));
+  var c = (await _cacheGet('cont_cache')) || [];
+  _cacheSet('cont_cache', c.map(function(r){ return r.id === item.id ? Object.assign({},r,item) : r; }));
   if (navigator.onLine) {
     var { error } = await _sb.from('contabilidad').update(dbItem).eq('id', item.id);
-    if (error) console.error('Error actualizando cont:', error); return;
+    if (error) console.error('Error actualizando cont:', error);
+    return;
   }
   await _addToQueue({ op: 'update', table: 'cont', id: item.id, data: dbItem });
   await _updatePendingBadge();
 }
 
 async function dbDeleteCont(id) {
-  var cached = (await _cacheGet('cont_cache')) || [];
-  _cacheSet('cont_cache', cached.filter(function (r) { return r.id !== id; }));
+  var c = (await _cacheGet('cont_cache')) || [];
+  _cacheSet('cont_cache', c.filter(function(r){ return r.id !== id; }));
   if (navigator.onLine) {
     var { error } = await _sb.from('contabilidad').delete().eq('id', id);
-    if (error) console.error('Error eliminando cont:', error); return;
+    if (error) console.error('Error eliminando cont:', error);
+    return;
   }
   await _addToQueue({ op: 'delete', table: 'cont', id: id });
   await _updatePendingBadge();
@@ -450,14 +434,11 @@ async function loadAll() {
 
   showScreen('screen-login');
 
-  /* Precargar caché local inmediatamente */
-  var cachedInv  = await _cacheGet('inv_cache');
+  var cachedInv = await _cacheGet('inv_cache');
   var cachedCont = await _cacheGet('cont_cache');
   if (cachedInv)  invData  = cachedInv;
   if (cachedCont) contData = cachedCont;
   _updatePendingBadge();
-
-  /* Subir pendientes ANTES de leer Supabase (evita race condition) */
   if (navigator.onLine) await flushQueue();
 
   var savedUser = sessGet('sess_v9');
@@ -796,7 +777,7 @@ function getSorted(rows) {
     arr.sort(function (a, b) {
       var ai = typeof a.id === 'string' ? -1 : a.id;
       var bi = typeof b.id === 'string' ? -1 : b.id;
-      return bi - ai;   /* pend_* siempre al tope */
+      return bi - ai;
     });
   }
   return arr;
@@ -834,12 +815,7 @@ async function addInventario() {
   if (newId) {
     item.id = newId;
     renderInv();
-    var isPend = typeof newId === 'string' && newId.startsWith('pend_');
-    if (isPend) {
-      console.log('[Offline] Guía guardada localmente:', g);
-    } else {
-      broadcastInv();
-    }
+    if (typeof newId !== 'string' || !newId.startsWith('pend_')) broadcastInv();
   } else {
     invData = invData.filter(function (r) { return r !== item; });
     renderInv();
@@ -899,7 +875,7 @@ function renderInv() {
     var dupTag   = isDup ? '<span class="tag-dup">Duplicada</span>' : '';
     var rowClass = isDup ? 'row-dup' : (estado === 'entregado' ? 'row-entg' : (estado === 'no_entregado' ? 'row-noentg' : ''));
     var isPend   = typeof r.id === 'string' && r.id.startsWith('pend_');
-    var del      = isAdmin() && !isPend ? '<button class="btn-del" onclick="delInv(' + r.id + ')">✕</button>' : (isPend ? '<span style="font-size:10px;color:#f59e0b">⏳</span>' : '');
+    var del      = isAdmin() && !isPend ? '<button class="btn-del" onclick="delInv(' + r.id + ')">✕</button>' : (isPend ? '<span title="Pendiente de subir" style="font-size:10px;color:#f59e0b">⏳</span>' : '');
     var editBtn  = isAdmin() && !isPend ? '<button class="btn-ghost" style="padding:3px 9px;font-size:12px" onclick="openEditInv(' + r.id + ')">✎</button>' : '';
     var estBtn   = estadoLabel(estado).replace('ID', r.id);
     var bodegaTxt = r.bodega === '—' ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : r.bodega;
@@ -981,8 +957,7 @@ async function addContabilidad() {
   if (newId) {
     item.id = newId;
     renderCont();
-    var isPend = typeof newId === 'string' && newId.startsWith('pend_');
-    if (!isPend) broadcastCont();
+    if (typeof newId !== 'string' || !newId.startsWith('pend_')) broadcastCont();
   } else {
     contData = contData.filter(function (r) { return r !== item; });
     renderCont();
