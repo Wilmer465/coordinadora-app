@@ -67,14 +67,11 @@ async function flushQueue() {
       } catch(e) { console.warn('[Offline] Excepción:', e); failed.push(op); }
     }
     await _cacheSet('pending_queue', failed);
-
-    /* ✅ FIX DUPLICADOS: limpiar pend_* del caché ANTES de recargar
-       de Supabase — así dbLoadInv no mezcla items ya subidos */
+    /* Limpiar pend_* del caché antes de recargar Supabase → evita duplicados */
     var ic = (await _cacheGet('inv_cache'))  || [];
     var cc = (await _cacheGet('cont_cache')) || [];
     await _cacheSet('inv_cache',  ic.filter(function(r){ return typeof r.id !== 'string' || !r.id.startsWith('pend_'); }));
     await _cacheSet('cont_cache', cc.filter(function(r){ return typeof r.id !== 'string' || !r.id.startsWith('pend_'); }));
-
     var r = await Promise.all([dbLoadInv(), dbLoadCont()]);
     invData = r[0]; contData = r[1];
     invData.forEach(function(x){ if (!x.estado) x.estado = 'pendiente'; });
@@ -151,8 +148,8 @@ function initRealtime() {
     _getQueue().then(function(q) {
       if (q.length) return;
       Promise.all([ dbLoadInv(), dbLoadCont() ])
-        .then(function(r) { invData=r[0]; contData=r[1]; renderInv(); renderCont(); renderDash(); })
-        .catch(function(e) { console.warn('Poll error:', e); });
+        .then(function(r){ invData=r[0]; contData=r[1]; renderInv(); renderCont(); renderDash(); })
+        .catch(function(e){ console.warn('Poll error:', e); });
     });
   }, 5000);
 
@@ -190,7 +187,6 @@ async function dbLoadInv() {
     var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
     if (!error && data) {
       var fromSrv = data.map(invFromDb);
-      /* Solo conservar pend_* que aún están en la cola */
       var queue   = await _getQueue();
       var cached  = (await _cacheGet('inv_cache')) || [];
       var pending = cached.filter(function(r) {
@@ -212,8 +208,8 @@ async function dbInsertInv(item) {
   if (navigator.onLine) {
     var { data, error } = await _sb.from('inventario').insert(dbItem).select('id').single();
     if (!error && data) {
-      var cached = (await _cacheGet('inv_cache')) || [];
-      _cacheSet('inv_cache', cached.map(function(r){ return r === item ? Object.assign({}, item, { id: data.id }) : r; }));
+      var c = (await _cacheGet('inv_cache')) || [];
+      _cacheSet('inv_cache', c.map(function(r){ return r === item ? Object.assign({}, item, { id: data.id }) : r; }));
       return data.id;
     }
   }
@@ -230,6 +226,7 @@ async function dbInsertInv(item) {
 
 async function dbUpdateInv(item) {
   var dbItem = { guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha };
+  /* Actualizar caché siempre */
   var c = (await _cacheGet('inv_cache')) || [];
   _cacheSet('inv_cache', c.map(function(r){ return r.id === item.id ? Object.assign({},r,item) : r; }));
   if (navigator.onLine) {
@@ -237,7 +234,15 @@ async function dbUpdateInv(item) {
     if (error) console.error('Error actualizando inv:', error);
     return;
   }
-  await _addToQueue({ op: 'update', table: 'inv', id: item.id, data: dbItem });
+  /* Offline: encolar — si ya hay un insert pend_ para este id, actualizar ese insert */
+  var queue = await _getQueue();
+  var existingInsert = queue.findIndex(function(op){ return op.table === 'inv' && op.op === 'insert' && op._tempId === item.id; });
+  if (existingInsert >= 0) {
+    queue[existingInsert].data = dbItem;
+    await _cacheSet('pending_queue', queue);
+  } else {
+    await _addToQueue({ op: 'update', table: 'inv', id: item.id, data: dbItem });
+  }
   await _updatePendingBadge();
 }
 
@@ -249,7 +254,14 @@ async function dbDeleteInv(id) {
     if (error) console.error('Error eliminando inv:', error);
     return;
   }
-  await _addToQueue({ op: 'delete', table: 'inv', id: id });
+  /* Offline: si era un insert pend_, solo eliminar de la cola */
+  var queue = await _getQueue();
+  var wasPend = typeof id === 'string' && id.startsWith('pend_');
+  if (wasPend) {
+    await _cacheSet('pending_queue', queue.filter(function(op){ return !(op.table === 'inv' && op.op === 'insert' && op._tempId === id); }));
+  } else {
+    await _addToQueue({ op: 'delete', table: 'inv', id: id });
+  }
   await _updatePendingBadge();
 }
 
@@ -305,7 +317,14 @@ async function dbUpdateCont(item) {
     if (error) console.error('Error actualizando cont:', error);
     return;
   }
-  await _addToQueue({ op: 'update', table: 'cont', id: item.id, data: dbItem });
+  var queue = await _getQueue();
+  var existingInsert = queue.findIndex(function(op){ return op.table === 'cont' && op.op === 'insert' && op._tempId === item.id; });
+  if (existingInsert >= 0) {
+    queue[existingInsert].data = dbItem;
+    await _cacheSet('pending_queue', queue);
+  } else {
+    await _addToQueue({ op: 'update', table: 'cont', id: item.id, data: dbItem });
+  }
   await _updatePendingBadge();
 }
 
@@ -317,7 +336,13 @@ async function dbDeleteCont(id) {
     if (error) console.error('Error eliminando cont:', error);
     return;
   }
-  await _addToQueue({ op: 'delete', table: 'cont', id: id });
+  var queue = await _getQueue();
+  var wasPend = typeof id === 'string' && id.startsWith('pend_');
+  if (wasPend) {
+    await _cacheSet('pending_queue', queue.filter(function(op){ return !(op.table === 'cont' && op.op === 'insert' && op._tempId === id); }));
+  } else {
+    await _addToQueue({ op: 'delete', table: 'cont', id: id });
+  }
   await _updatePendingBadge();
 }
 
@@ -434,10 +459,9 @@ async function loadAll() {
 
   showScreen('screen-login');
 
-  var cachedInv = await _cacheGet('inv_cache');
-  var cachedCont = await _cacheGet('cont_cache');
-  if (cachedInv)  invData  = cachedInv;
-  if (cachedCont) contData = cachedCont;
+  var ci = await _cacheGet('inv_cache'); var cc2 = await _cacheGet('cont_cache');
+  if (ci)  invData  = ci;
+  if (cc2) contData = cc2;
   _updatePendingBadge();
   if (navigator.onLine) await flushQueue();
 
@@ -896,8 +920,9 @@ function renderInv() {
 var _editInvId = null;
 function openEditInv(id) {
   if (!isAdmin()) return;
-  var r = invData.find(function (x) { return x.id === id; }); if (!r) return;
-  _editInvId = id;
+  /* Soportar IDs numéricos y pend_* (offline) */
+  var r = invData.find(function (x) { return x.id === id || x.id === +id; }); if (!r) return;
+  _editInvId = r.id;
   document.getElementById('ei-guia').value   = r.guia;
   document.getElementById('ei-bodega').value = r.bodega === '—' ? '' : r.bodega;
   document.getElementById('ei-pin').value    = r.pin === '—' ? '' : r.pin;
@@ -917,7 +942,7 @@ async function confirmEditInv() {
   var old = Object.assign({}, r);
   r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
   await dbUpdateInv(r);
-  broadcastInv();
+  if (navigator.onLine) broadcastInv();
   await logAction('edicion_inv', r.guia,
     'Editó guía: "' + old.guia + '" → "' + r.guia + '" | Bodega: "' + old.bodega + '" → "' + r.bodega + '" | PIN: "' + old.pin + '" → "' + r.pin + '"');
   closeEditInv(); renderInv();
@@ -1015,8 +1040,8 @@ function calcEditTotals() {
 
 function openEditCont(id) {
   if (!isAdmin()) return;
-  var r = contData.find(function (x) { return x.id === id; }); if (!r) return;
-  _editContId = id;
+  var r = contData.find(function (x) { return x.id === id || x.id === +id; }); if (!r) return;
+  _editContId = r.id;
   var now = new Date();
   document.getElementById('ec-fecha').value  = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   document.getElementById('ec-equipo').value = r.equipo;
@@ -1051,7 +1076,7 @@ async function confirmEditCont() {
   r.fecha  = new Date(fecha).toLocaleString('es-CO');
   r.equipo = equipo; r.valorM = m; r.valorB = b; r.total = m + b; r.denoms = denoms;
   await dbUpdateCont(r);
-  broadcastCont();
+  if (navigator.onLine) broadcastCont();
   await logAction('edicion_cont', r.equipo,
     'Editó registro contable "' + r.equipo + '" | Total: ' + fmt(oldTotal) + ' → ' + fmt(r.total));
   closeEditCont(); renderCont();
