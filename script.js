@@ -34,13 +34,6 @@ function _showDot(online) {
 window.addEventListener('online',  function(){ _showDot(true);  flushQueue(); });
 window.addEventListener('offline', function(){ _showDot(false); });
 
-/* Reintento automático cada 30 s */
-setInterval(async function(){
-  if (!navigator.onLine) return;
-  var q = await _getQueue();
-  if (q.length) flushQueue();
-}, 30000);
-
 /* ── Helpers caché ───────────────────────────────────────────── */
 function _cSet(k,v){ return _lf ? _lf.setItem(k,v).catch(function(){}) : Promise.resolve(); }
 function _cGet(k)  { return _lf ? _lf.getItem(k).catch(function(){ return null; }) : Promise.resolve(null); }
