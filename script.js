@@ -1638,4 +1638,4 @@ function autoAddGuia(input) {
 }
 
 /* ── ARRANQUE ─────────────────────────────────────────────────── */
-loadAll();
+loadAll()
