@@ -3,6 +3,132 @@
     ════════════════════════════════════════════════ */
 const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+/* ═══════════════════════════════════════════════════════════════
+    OFFLINE — IndexedDB via localForage
+    ─────────────────────────────────────────────────────────────
+    Estrategia de escritura: caché local primero, Supabase después.
+    El polling/broadcast NO corre mientras haya pendientes o sin red.
+   ═══════════════════════════════════════════════════════════════ */
+var _syncQueued = false;
+var _lf = (typeof localforage !== 'undefined') ? localforage : null;
+
+/* ── Indicador visual ────────────────────────────────────────── */
+function _showDot(online) {
+  var dot = document.getElementById('offline-dot');
+  if (!dot) {
+    dot = document.createElement('div'); dot.id = 'offline-dot';
+    dot.style.cssText = 'position:fixed;bottom:72px;left:50%;transform:translateX(-50%);z-index:9999;' +
+      'padding:6px 18px;border-radius:99px;font-size:12px;font-weight:600;' +
+      'box-shadow:0 2px 10px rgba(0,0,0,.2);transition:opacity .5s;pointer-events:none;white-space:nowrap';
+    document.body.appendChild(dot);
+  }
+  if (online) {
+    dot.textContent = '🟢 Conexión restaurada';
+    dot.style.cssText += 'background:#e6f4ea;color:#137333;opacity:1';
+    setTimeout(function(){ dot.style.opacity='0'; }, 3000);
+  } else {
+    dot.textContent = '🔴 Sin conexión — guardando localmente';
+    dot.style.cssText += 'background:#fff3cd;color:#856404;opacity:1';
+  }
+}
+window.addEventListener('online',  function(){ _showDot(true);  flushQueue(); });
+window.addEventListener('offline', function(){ _showDot(false); });
+
+/* Reintento automático cada 30 s */
+setInterval(async function(){
+  if (!navigator.onLine) return;
+  var q = await _getQueue();
+  if (q.length) flushQueue();
+}, 30000);
+
+/* ── Helpers caché ───────────────────────────────────────────── */
+function _cSet(k,v){ return _lf ? _lf.setItem(k,v).catch(function(){}) : Promise.resolve(); }
+function _cGet(k)  { return _lf ? _lf.getItem(k).catch(function(){ return null; }) : Promise.resolve(null); }
+
+async function _getQueue(){ return (await _cGet('pq')) || []; }
+
+async function _enqueue(op){
+  op.ts=Date.now(); op.u=currentUser; op.ro=currentRole;
+  var q=await _getQueue(); q.push(op); await _cSet('pq',q);
+  console.log('[Q]',op.op,op.table);
+}
+
+/* ── Subir cola al reconectar ─────────────────────────────────── */
+async function flushQueue(){
+  if (_syncQueued || !navigator.onLine) return;
+  _syncQueued = true;
+  _setBadgeText('⏳ Sincronizando…', false);
+  try {
+    var queue = await _getQueue();
+    if (!queue.length){ _updateBadge(); return; }
+    var failed = [];
+    for (var i=0; i<queue.length; i++){
+      var op = queue[i];
+      try {
+        if (op.u && op.ro) await _sb.rpc('set_session_user',{p_username:op.u, p_role:op.ro});
+        var tbl = op.table==='inv' ? 'inventario' : 'contabilidad';
+        var res;
+        if      (op.op==='insert') res = await _sb.from(tbl).insert(op.data);
+        else if (op.op==='update') res = await _sb.from(tbl).update(op.data).eq('id',op.id);
+        else if (op.op==='delete') res = await _sb.from(tbl).delete().eq('id',op.id);
+        if (res && res.error){ console.error('[Q] error:',res.error); failed.push(op); }
+        else console.log('[Q] ✓',op.op,op.table);
+      } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
+    }
+    await _cSet('pq', failed);
+    /* Limpiar pend_* del caché → evita duplicados */
+    ['ic','cc'].forEach(async function(key){
+      var c = (await _cGet(key)) || [];
+      await _cSet(key, c.filter(function(r){ return !(typeof r.id==='string' && r.id.startsWith('pend_')); }));
+    });
+    /* Recargar datos reales */
+    var rd = await Promise.all([_loadInvOnline(), _loadContOnline()]);
+    if (rd[0]) { invData=rd[0];  renderInv();  }
+    if (rd[1]) { contData=rd[1]; renderCont(); }
+    if (rd[0]||rd[1]) renderDash();
+    _updateBadge();
+  } finally { _syncQueued=false; }
+}
+
+async function _loadInvOnline(){
+  try {
+    var {data,error} = await _sb.from('inventario').select('*').order('id',{ascending:false});
+    if (!error && data) return data.map(invFromDb);
+  } catch(e){}
+  return null;
+}
+async function _loadContOnline(){
+  try {
+    var {data,error} = await _sb.from('contabilidad').select('*').order('id',{ascending:false});
+    if (!error && data) return data.map(contFromDb);
+  } catch(e){}
+  return null;
+}
+
+/* ── Badge de pendientes ─────────────────────────────────────── */
+function _setBadgeText(txt, clickable){
+  var b=document.getElementById('pq-badge');
+  if (!b) return;
+  b.textContent=txt;
+  b.style.cursor=clickable?'pointer':'default';
+  b.style.display='block';
+}
+async function _updateBadge(){
+  var q = await _getQueue();
+  var b = document.getElementById('pq-badge');
+  if (!q.length){ if(b) b.style.display='none'; return; }
+  if (!b){
+    b=document.createElement('div'); b.id='pq-badge';
+    b.style.cssText='position:fixed;top:10px;right:12px;z-index:9998;background:#f59e0b;'+
+      'color:#fff;border-radius:99px;font-size:11px;font-weight:700;padding:4px 12px;'+
+      'box-shadow:0 2px 6px rgba(0,0,0,.25);cursor:pointer;';
+    b.onclick=function(){ flushQueue(); };
+    document.body.appendChild(b);
+  }
+  b.textContent='⬆ '+q.length+' pendiente'+(q.length!==1?'s':'')+' — subir';
+  b.style.display='block'; b.style.cursor='pointer'; b.style.background='#f59e0b';
+}
+
 /* ── ESTADO GLOBAL ────────────────────────────────────────────── */
 var invData = [], contData = [], users = [], sessionLog = [], adminActions = [];
 var currentUser = null, currentRole = null;
@@ -29,26 +155,31 @@ function initRealtime() {
 
   /* Intentar broadcast instantáneo entre usuarios */
   _broadcastChannel = _sb.channel('app-sync', { config: { broadcast: { self: false } } })
-    .on('broadcast', { event: 'inv-change' }, function () {
-      dbLoadInv().then(function (d) { invData = d; renderInv(); renderDash(); });
+    .on('broadcast', { event: 'inv-change' }, function(){
+      if (!navigator.onLine) return;
+      _getQueue().then(function(q){
+        if (q.some(function(op){ return op.table==='inv'; })) return;
+        dbLoadInv().then(function(d){ invData=d; renderInv(); renderDash(); });
+      });
     })
-    .on('broadcast', { event: 'cont-change' }, function () {
-      dbLoadCont().then(function (d) { contData = d; renderCont(); renderDash(); });
+    .on('broadcast', { event: 'cont-change' }, function(){
+      if (!navigator.onLine) return;
+      _getQueue().then(function(q){
+        if (q.some(function(op){ return op.table==='cont'; })) return;
+        dbLoadCont().then(function(d){ contData=d; renderCont(); renderDash(); });
+      });
     })
     .subscribe(function (s) { console.log('Realtime:', s); });
 
-  /* Polling cada 5 s — garantiza que todos ven los cambios */
-  _pollInterval = setInterval(function () {
-    if (!currentUser) return;
-    Promise.all([ dbLoadInv(), dbLoadCont() ])
-      .then(function (r) {
-        invData  = r[0];
-        contData = r[1];
-        renderInv();
-        renderCont();
-        renderDash();
-      })
-      .catch(function (e) { console.warn('Poll error:', e); });
+  /* Polling cada 5 s — SOLO online y sin pendientes en cola */
+  _pollInterval = setInterval(function(){
+    if (!currentUser || !navigator.onLine || _syncQueued) return;
+    _getQueue().then(function(q){
+      if (q.length) return;  /* hay pendientes: esperar */
+      Promise.all([dbLoadInv(), dbLoadCont()])
+        .then(function(r){ invData=r[0]; contData=r[1]; renderInv(); renderCont(); renderDash(); })
+        .catch(function(e){ console.warn('Poll err:',e); });
+    });
   }, 5000);
 
   console.log('Sync activo');
@@ -81,56 +212,173 @@ function actionToDb(r)   { return { id: r.id, type: r.type, by: r.by, affected: 
 
 /* ── Inventario — CRUD ────────────────────────────────────────── */
 async function dbLoadInv() {
-  var { data, error } = await _sb.from('inventario').select('*').order('id', { ascending: false });
-  if (error) { console.error('Error cargando inventario:', error); return []; }
-  return (data || []).map(invFromDb);
+  /* Intentar Supabase primero */
+  if (navigator.onLine && !_syncQueued) {
+    var d = await _loadInvOnline();
+    if (d) {
+      /* Filtrar deletes pendientes → no reaparecen */
+      var q = await _getQueue();
+      var delIds = q.filter(function(op){ return op.table==='inv'&&op.op==='delete'; }).map(function(op){ return op.id; });
+      d = d.filter(function(r){ return delIds.indexOf(r.id)===-1; });
+      /* Aplicar edits pendientes → cambios offline se ven */
+      q.filter(function(op){ return op.table==='inv'&&op.op==='update'; }).forEach(function(op){
+        var idx=d.findIndex(function(r){ return r.id===op.id; });
+        if (idx>=0) d[idx]=Object.assign({},d[idx],invFromDb(Object.assign({id:op.id},op.data)));
+      });
+      /* Agregar inserts pend_* que aún no se subieron */
+      var cached=(await _cGet('ic'))||[];
+      var pends=cached.filter(function(r){ return typeof r.id==='string'&&r.id.startsWith('pend_'); });
+      d = pends.concat(d);
+      await _cSet('ic', d);
+      return d;
+    }
+  }
+  /* Offline: usar caché */
+  var c = await _cGet('ic');
+  if (c&&c.length){ console.log('[Offline] inv caché:',c.length); return c; }
+  return [];
 }
 
 async function dbInsertInv(item) {
-  var { data, error } = await _sb.from('inventario')
-    .insert({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado || 'pendiente', fecha: item.fecha })
-    .select('id').single();
-  if (error) { console.error('Error insertando inventario:', error); return null; }
-  return data ? data.id : null;
+  var dbItem={guia:item.guia,bodega:item.bodega,pin:item.pin,estado:item.estado||'pendiente',fecha:item.fecha};
+  if (navigator.onLine) {
+    try {
+      var {data,error}=await _sb.from('inventario').insert(dbItem).select('id').single();
+      if (!error&&data){
+        var c=(await _cGet('ic'))||[];
+        c=c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; });
+        await _cSet('ic',c);
+        return data.id;
+      }
+    } catch(e){ console.warn('[Offline] insert inv:',e); }
+  }
+  /* Sin red: ID temporal */
+  var tid='pend_'+Date.now();
+  await _enqueue({op:'insert',table:'inv',data:dbItem,_tid:tid});
+  var c2=(await _cGet('ic'))||[];
+  var found=false;
+  c2=c2.map(function(r){
+    if (!found&&(r.id===null||r.id===undefined)&&r.guia===item.guia){ found=true; return Object.assign({},r,{id:tid}); }
+    return r;
+  });
+  if (!found) c2.unshift(Object.assign({},item,{id:tid}));
+  await _cSet('ic',c2);
+  await _updateBadge();
+  return tid;
 }
 
 async function dbUpdateInv(item) {
-  var { error } = await _sb.from('inventario')
-    .update({ guia: item.guia, bodega: item.bodega, pin: item.pin, estado: item.estado, fecha: item.fecha })
-    .eq('id', item.id);
-  if (error) console.error('Error actualizando inventario:', error);
+  var dbItem={guia:item.guia,bodega:item.bodega,pin:item.pin,estado:item.estado,fecha:item.fecha};
+  /* Actualizar caché local siempre primero */
+  var c=(await _cGet('ic'))||[];
+  await _cSet('ic', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
+  if (navigator.onLine) {
+    try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(error) console.error('upd inv:',error); }
+    catch(e){ console.warn('upd inv:',e); }
+    return;
+  }
+  /* Sin red: encolar — si ya existe un insert pend_ para este ID, actualizar ese data */
+  var q=await _getQueue();
+  var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
+  if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
+  else { await _enqueue({op:'update',table:'inv',id:item.id,data:dbItem}); }
+  await _updateBadge();
 }
 
 async function dbDeleteInv(id) {
-  var { error } = await _sb.from('inventario').delete().eq('id', id);
-  if (error) console.error('Error eliminando inventario:', error);
+  var c=(await _cGet('ic'))||[];
+  await _cSet('ic', c.filter(function(r){ return r.id!==id; }));
+  var isPend=typeof id==='string'&&id.startsWith('pend_');
+  if (navigator.onLine&&!isPend) {
+    try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(error) console.error('del inv:',error); }
+    catch(e){ console.warn('del inv:',e); }
+    return;
+  }
+  var q=await _getQueue();
+  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid===id); })); }
+  else        { await _enqueue({op:'delete',table:'inv',id:id}); }
+  await _updateBadge();
 }
 
 /* ── Contabilidad — CRUD ──────────────────────────────────────── */
 async function dbLoadCont() {
-  var { data, error } = await _sb.from('contabilidad').select('*').order('id', { ascending: false });
-  if (error) { console.error('Error cargando contabilidad:', error); return []; }
-  return (data || []).map(contFromDb);
+  if (navigator.onLine && !_syncQueued) {
+    var d = await _loadContOnline();
+    if (d) {
+      var q=await _getQueue();
+      var delIds=q.filter(function(op){ return op.table==='cont'&&op.op==='delete'; }).map(function(op){ return op.id; });
+      d=d.filter(function(r){ return delIds.indexOf(r.id)===-1; });
+      q.filter(function(op){ return op.table==='cont'&&op.op==='update'; }).forEach(function(op){
+        var idx=d.findIndex(function(r){ return r.id===op.id; });
+        if (idx>=0) d[idx]=Object.assign({},d[idx],contFromDb(Object.assign({id:op.id},op.data)));
+      });
+      var cached=(await _cGet('cc'))||[];
+      var pends=cached.filter(function(r){ return typeof r.id==='string'&&r.id.startsWith('pend_'); });
+      d=pends.concat(d);
+      await _cSet('cc',d);
+      return d;
+    }
+  }
+  var c=await _cGet('cc');
+  if (c&&c.length){ console.log('[Offline] cont caché:',c.length); return c; }
+  return [];
 }
 
 async function dbInsertCont(item) {
-  var { data, error } = await _sb.from('contabilidad')
-    .insert({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
-    .select('id').single();
-  if (error) { console.error('Error insertando contabilidad:', error); return null; }
-  return data ? data.id : null;
+  var dbItem={fecha:item.fecha,equipo:item.equipo,valor_m:item.valorM,valor_b:item.valorB,total:item.total,denoms:item.denoms||null};
+  if (navigator.onLine) {
+    try {
+      var {data,error}=await _sb.from('contabilidad').insert(dbItem).select('id').single();
+      if (!error&&data){
+        var c=(await _cGet('cc'))||[];
+        await _cSet('cc', c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; }));
+        return data.id;
+      }
+    } catch(e){ console.warn('[Offline] insert cont:',e); }
+  }
+  var tid='pend_'+Date.now();
+  await _enqueue({op:'insert',table:'cont',data:dbItem,_tid:tid});
+  var c2=(await _cGet('cc'))||[];
+  var found=false;
+  c2=c2.map(function(r){
+    if (!found&&(r.id===null||r.id===undefined)&&r.equipo===item.equipo){ found=true; return Object.assign({},r,{id:tid}); }
+    return r;
+  });
+  if (!found) c2.unshift(Object.assign({},item,{id:tid}));
+  await _cSet('cc',c2);
+  await _updateBadge();
+  return tid;
 }
 
 async function dbUpdateCont(item) {
-  var { error } = await _sb.from('contabilidad')
-    .update({ fecha: item.fecha, equipo: item.equipo, valor_m: item.valorM, valor_b: item.valorB, total: item.total, denoms: item.denoms || null })
-    .eq('id', item.id);
-  if (error) console.error('Error actualizando contabilidad:', error);
+  var dbItem={fecha:item.fecha,equipo:item.equipo,valor_m:item.valorM,valor_b:item.valorB,total:item.total,denoms:item.denoms||null};
+  var c=(await _cGet('cc'))||[];
+  await _cSet('cc', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
+  if (navigator.onLine) {
+    try { var {error}=await _sb.from('contabilidad').update(dbItem).eq('id',item.id); if(error) console.error('upd cont:',error); }
+    catch(e){ console.warn('upd cont:',e); }
+    return;
+  }
+  var q=await _getQueue();
+  var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid===item.id; });
+  if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
+  else { await _enqueue({op:'update',table:'cont',id:item.id,data:dbItem}); }
+  await _updateBadge();
 }
 
 async function dbDeleteCont(id) {
-  var { error } = await _sb.from('contabilidad').delete().eq('id', id);
-  if (error) console.error('Error eliminando contabilidad:', error);
+  var c=(await _cGet('cc'))||[];
+  await _cSet('cc', c.filter(function(r){ return r.id!==id; }));
+  var isPend=typeof id==='string'&&id.startsWith('pend_');
+  if (navigator.onLine&&!isPend) {
+    try { var {error}=await _sb.from('contabilidad').delete().eq('id',id); if(error) console.error('del cont:',error); }
+    catch(e){ console.warn('del cont:',e); }
+    return;
+  }
+  var q=await _getQueue();
+  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid===id); })); }
+  else        { await _enqueue({op:'delete',table:'cont',id:id}); }
+  await _updateBadge();
 }
 
 /* ── Usuarios — CRUD ──────────────────────────────────────────── */
@@ -245,6 +493,16 @@ async function loadAll() {
   }
 
   showScreen('screen-login');
+
+  /* Mostrar caché inmediatamente mientras carga */
+  try {
+    var _ci=await _cGet('ic'); var _cc=await _cGet('cc');
+    if (_ci) invData=_ci;
+    if (_cc) contData=_cc;
+    await _updateBadge();
+    /* Subir pendientes ANTES de recargar Supabase */
+    if (navigator.onLine) await flushQueue();
+  } catch(e){ console.warn('loadAll init:',e); }
 
   var savedUser = sessGet('sess_v9');
   var savedRole = sessGet('role_v9');
@@ -579,7 +837,11 @@ function getSorted(rows) {
       return db - da;
     });
   } else {
-    arr.sort(function (a, b) { return b.id - a.id; });
+    arr.sort(function(a,b){
+      var ai=typeof a.id==='string'?Number.MAX_SAFE_INTEGER:a.id;
+      var bi=typeof b.id==='string'?Number.MAX_SAFE_INTEGER:b.id;
+      return bi-ai;
+    });
   }
   return arr;
 }
@@ -596,13 +858,11 @@ function getDupGuias() {
 }
 
 async function toggleEstado(id) {
-  /* Buscar por ID string (pend_*) o numérico */
-  var rec = invData.find(function(r){ return r.id===id || r.id===+id; });
-  if (!rec) return;
+  var rec = invData.find(function (r) { return r.id === id; }); if (!rec) return;
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
   await dbUpdateInv(rec);
-  if (navigator.onLine) broadcastInv();
+  broadcastInv();
   renderInv();
 }
 
@@ -617,10 +877,10 @@ async function addInventario() {
   var newId = await dbInsertInv(item);
   if (newId) {
     item.id = newId;
-    renderInv(); /* re-renderizar con el ID real para que el botón editar funcione */
-    broadcastInv();
+    renderInv();
+    if (typeof newId!=='string'||!newId.startsWith('pend_')) broadcastInv();
   } else {
-    invData = invData.filter(function (r) { return r !== item; });
+    invData = invData.filter(function(r){ return r!==item; });
     renderInv();
     alert('Error al guardar. Intenta de nuevo.');
     return;
@@ -641,12 +901,10 @@ async function delInv(id) {
   renderInv(); renderDash();
 }
 
-function estadoLabel(e, id) {
-  /* Poner comillas si el ID es string (pend_*) para que el onclick sea válido */
-  var idStr = typeof id === 'string' ? "'" + id + "'" : id;
-  if (e === 'entregado')    return '<button class="estado-btn estado-entregado"    onclick="toggleEstado(' + idStr + ')">✓ Entregado</button>';
-  if (e === 'no_entregado') return '<button class="estado-btn estado-no-entregado" onclick="toggleEstado(' + idStr + ')">✕ No entregado</button>';
-  return '<button class="estado-btn estado-pendiente" onclick="toggleEstado(' + idStr + ')">○ Pendiente</button>';
+function estadoLabel(e) {
+  if (e === 'entregado')    return '<button class="estado-btn estado-entregado"    onclick="toggleEstado(ID)">✓ Entregado</button>';
+  if (e === 'no_entregado') return '<button class="estado-btn estado-no-entregado" onclick="toggleEstado(ID)">✕ No entregado</button>';
+  return '<button class="estado-btn estado-pendiente" onclick="toggleEstado(ID)">○ Pendiente</button>';
 }
 
 function renderInv() {
@@ -679,10 +937,10 @@ function renderInv() {
     var isDup    = dups[r.guia.toLowerCase()] > 1;
     var dupTag   = isDup ? '<span class="tag-dup">Duplicada</span>' : '';
     var rowClass = isDup ? 'row-dup' : (estado === 'entregado' ? 'row-entg' : (estado === 'no_entregado' ? 'row-noentg' : ''));
-    var del      = isAdmin() ? '<button class="btn-del" onclick="delInv(' + r.id + ')">✕</button>' : '';
-    var editBtn  = isAdmin() ? '<button class="btn-ghost" style="padding:3px 9px;font-size:12px" onclick="openEditInv(' + r.id + ')">✎</button>' : '';
-    /* Pasar id directamente — estadoLabel ya maneja string vs número */
-    var estBtn   = estadoLabel(estado, r.id);
+    var _qi = typeof r.id==='string' ? "'"+r.id+"'" : r.id;
+    var del     = isAdmin() ? '<button class="btn-del" onclick="delInv('+_qi+')">✕</button>' : '';
+    var editBtn = isAdmin() ? '<button class="btn-ghost" style="padding:3px 9px;font-size:12px" onclick="openEditInv('+_qi+')">✎</button>' : '';
+    var estBtn   = estadoLabel(estado).replace('ID', r.id);
     var bodegaTxt = r.bodega === '—' ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : r.bodega;
     var pinTxt    = r.pin === '—'   ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : '<span style="font-weight:600;font-family:monospace">' + r.pin + '</span>';
     return '<tr class="' + rowClass + '">'
@@ -701,8 +959,9 @@ function renderInv() {
 var _editInvId = null;
 function openEditInv(id) {
   if (!isAdmin()) return;
-  var r = invData.find(function (x) { return x.id === id; }); if (!r) return;
-  _editInvId = id;
+  var r = invData.find(function(x){ return x.id===id||x.id===+id; });
+  if (!r) return;
+  _editInvId = r.id;
   document.getElementById('ei-guia').value   = r.guia;
   document.getElementById('ei-bodega').value = r.bodega === '—' ? '' : r.bodega;
   document.getElementById('ei-pin').value    = r.pin === '—' ? '' : r.pin;
@@ -722,7 +981,7 @@ async function confirmEditInv() {
   var old = Object.assign({}, r);
   r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
   await dbUpdateInv(r);
-  broadcastInv();
+  if (navigator.onLine) broadcastInv();
   await logAction('edicion_inv', r.guia,
     'Editó guía: "' + old.guia + '" → "' + r.guia + '" | Bodega: "' + old.bodega + '" → "' + r.bodega + '" | PIN: "' + old.pin + '" → "' + r.pin + '"');
   closeEditInv(); renderInv();
@@ -761,10 +1020,10 @@ async function addContabilidad() {
   var newId = await dbInsertCont(item);
   if (newId) {
     item.id = newId;
-    renderCont(); /* re-renderizar con el ID real para que el botón editar funcione */
-    broadcastCont();
+    renderCont();
+    if (typeof newId!=='string'||!newId.startsWith('pend_')) broadcastCont();
   } else {
-    contData = contData.filter(function (r) { return r !== item; });
+    contData = contData.filter(function(r){ return r!==item; });
     renderCont();
     alert('Error al guardar. Intenta de nuevo.');
     return;
@@ -793,8 +1052,9 @@ function renderCont() {
   var tb = document.getElementById('cont-body');
   if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="empty">Sin registros</td></tr>'; return; }
   tb.innerHTML = rows.map(function (r, i) {
-    var del     = isAdmin() ? '<button class="btn-del" onclick="delCont(' + r.id + ')">✕</button>' : '';
-    var editBtn = isAdmin() ? '<button class="btn-ghost" style="padding:3px 9px;font-size:12px" onclick="openEditCont(' + r.id + ')">✎</button>' : '';
+    var _qc = typeof r.id==='string' ? "'"+r.id+"'" : r.id;
+    var del     = isAdmin() ? '<button class="btn-del" onclick="delCont('+_qc+')">✕</button>' : '';
+    var editBtn = isAdmin() ? '<button class="btn-ghost" style="padding:3px 9px;font-size:12px" onclick="openEditCont('+_qc+')">✎</button>' : '';
     return '<tr><td style="color:var(--text3);font-size:12px">' + (i + 1) + '</td>'
       + '<td style="font-size:12px">' + r.fecha + '</td>'
       + '<td style="font-weight:600">' + r.equipo + '</td>'
@@ -820,8 +1080,9 @@ function calcEditTotals() {
 
 function openEditCont(id) {
   if (!isAdmin()) return;
-  var r = contData.find(function (x) { return x.id === id; }); if (!r) return;
-  _editContId = id;
+  var r = contData.find(function(x){ return x.id===id||x.id===+id; });
+  if (!r) return;
+  _editContId = r.id;
   var now = new Date();
   document.getElementById('ec-fecha').value  = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   document.getElementById('ec-equipo').value = r.equipo;
@@ -856,7 +1117,7 @@ async function confirmEditCont() {
   r.fecha  = new Date(fecha).toLocaleString('es-CO');
   r.equipo = equipo; r.valorM = m; r.valorB = b; r.total = m + b; r.denoms = denoms;
   await dbUpdateCont(r);
-  broadcastCont();
+  if (navigator.onLine) broadcastCont();
   await logAction('edicion_cont', r.equipo,
     'Editó registro contable "' + r.equipo + '" | Total: ' + fmt(oldTotal) + ' → ' + fmt(r.total));
   closeEditCont(); renderCont();
