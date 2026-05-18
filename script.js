@@ -31,7 +31,6 @@ window.addEventListener('online',  function(){ _showDot(true);  flushQueue(); })
 window.addEventListener('offline', function(){ _showDot(false); });
 setInterval(async function(){ if (navigator.onLine){ var q=await _getQueue(); if(q.length) flushQueue(); } }, 30000);
 
-/* ── Helpers caché ───────────────────────────────────────────── */
 function _cSet(k,v){ return _lf ? _lf.setItem(k,v).catch(function(){}) : Promise.resolve(); }
 function _cGet(k)  { return _lf ? _lf.getItem(k).catch(function(){ return null; }) : Promise.resolve(null); }
 async function _getQueue(){ return (await _cGet('pq')) || []; }
@@ -64,8 +63,6 @@ async function flushQueue(){
       } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
     }
     await _cSet('pq', failed);
-
-    /* Limpiar pend_* del caché → evita duplicados */
     ['ic','cc'].forEach(async function(key){
       var c = (await _cGet(key)) || [];
       await _cSet(key, c.filter(function(r){ return !(typeof r.id==='string' && r.id.startsWith('pend_')); }));
@@ -243,10 +240,8 @@ async function dbUpdateInv(item) {
   var c=(await _cGet('ic'))||[];
   await _cSet('ic', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
   if (navigator.onLine) {
-    var _saved=false;
-    try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(!error) _saved=true; else console.error('upd inv:',error); } catch(e){ console.warn('upd inv exc:',e); }
-    if (_saved) return;
-    /* Sin internet real aunque onLine=true → encolar igual */
+    try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(error) console.error('upd inv:',error); } catch(e){}
+    return;
   }
   var q=await _getQueue();
   var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
@@ -260,10 +255,8 @@ async function dbDeleteInv(id) {
   await _cSet('ic', c.filter(function(r){ return r.id!==id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   if (navigator.onLine&&!isPend) {
-    var _saved=false;
-    try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(!error) _saved=true; else console.error('del inv:',error); } catch(e){ console.warn('del inv exc:',e); }
-    if (_saved) return;
-    /* Sin internet real → encolar */
+    try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(error) console.error('del inv:',error); } catch(e){}
+    return;
   }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid===id); })); }
@@ -320,10 +313,8 @@ async function dbUpdateCont(item) {
   var c=(await _cGet('cc'))||[];
   await _cSet('cc', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
   if (navigator.onLine) {
-    var _saved=false;
-    try { var {error}=await _sb.from('contabilidad').update(dbItem).eq('id',item.id); if(!error) _saved=true; else console.error('upd cont:',error); } catch(e){ console.warn('upd cont exc:',e); }
-    if (_saved) return;
-    /* Sin internet real → encolar */
+    try { var {error}=await _sb.from('contabilidad').update(dbItem).eq('id',item.id); if(error) console.error('upd cont:',error); } catch(e){}
+    return;
   }
   var q=await _getQueue();
   var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid===item.id; });
@@ -337,10 +328,8 @@ async function dbDeleteCont(id) {
   await _cSet('cc', c.filter(function(r){ return r.id!==id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   if (navigator.onLine&&!isPend) {
-    var _saved=false;
-    try { var {error}=await _sb.from('contabilidad').delete().eq('id',id); if(!error) _saved=true; else console.error('del cont:',error); } catch(e){ console.warn('del cont exc:',e); }
-    if (_saved) return;
-    /* Sin internet real → encolar */
+    try { var {error}=await _sb.from('contabilidad').delete().eq('id',id); if(error) console.error('del cont:',error); } catch(e){}
+    return;
   }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid===id); })); }
