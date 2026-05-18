@@ -197,10 +197,15 @@ async function dbLoadInv() {
       /* No mostrar items borrados offline */
       var delIds=q.filter(function(op){ return op.table==='inv'&&op.op==='delete'; }).map(function(op){ return op.id; });
       d=d.filter(function(r){ return delIds.indexOf(r.id)===-1; });
-      /* Aplicar edits pendientes → los cambios offline se ven */
+      /* Aplicar edits/estado pendientes → los cambios offline se ven */
       q.filter(function(op){ return op.table==='inv'&&op.op==='update'; }).forEach(function(op){
         var idx=d.findIndex(function(r){ return r.id===op.id; });
-        if (idx>=0) d[idx]=Object.assign({},d[idx],{estado:op.data.estado,guia:op.data.guia,bodega:op.data.bodega,pin:op.data.pin});
+        if (idx>=0) d[idx]=Object.assign({},d[idx],{
+          estado: op.data.estado || d[idx].estado,
+          guia:   op.data.guia   || d[idx].guia,
+          bodega: op.data.bodega || d[idx].bodega,
+          pin:    op.data.pin    || d[idx].pin
+        });
       });
       /* Agregar inserts pend_* que aún no se subieron */
       var cached=(await _cGet('ic'))||[];
@@ -816,9 +821,11 @@ async function toggleEstado(id) {
   if (!rec) return;
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
-  await dbUpdateInv(rec);
+  /* Actualizar invData en memoria para que renderInv refleje el cambio ya */
+  invData = invData.map(function(r){ return r.id === rec.id ? Object.assign({}, r, { estado: rec.estado }) : r; });
+  renderInv();  /* mostrar cambio inmediatamente */
+  await dbUpdateInv(rec);  /* guardar en caché/Supabase */
   if (navigator.onLine) broadcastInv();
-  renderInv();
 }
 
 async function addInventario() {
