@@ -5,14 +5,10 @@ const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ═══════════════════════════════════════════════════════════════
     OFFLINE — IndexedDB via localForage
-    ─────────────────────────────────────────────────────────────
-    Estrategia de escritura: caché local primero, Supabase después.
-    El polling/broadcast NO corre mientras haya pendientes o sin red.
    ═══════════════════════════════════════════════════════════════ */
 var _syncQueued = false;
 var _lf = (typeof localforage !== 'undefined') ? localforage : null;
 
-/* ── Indicador visual ────────────────────────────────────────── */
 function _showDot(online) {
   var dot = document.getElementById('offline-dot');
   if (!dot) {
@@ -24,27 +20,19 @@ function _showDot(online) {
   }
   if (online) {
     dot.textContent = '🟢 Conexión restaurada';
-    dot.style.cssText += 'background:#e6f4ea;color:#137333;opacity:1';
-    setTimeout(function(){ dot.style.opacity='0'; }, 3000);
+    dot.style.background = '#e6f4ea'; dot.style.color = '#137333'; dot.style.opacity = '1';
+    setTimeout(function(){ dot.style.opacity = '0'; }, 3000);
   } else {
     dot.textContent = '🔴 Sin conexión — guardando localmente';
-    dot.style.cssText += 'background:#fff3cd;color:#856404;opacity:1';
+    dot.style.background = '#fff3cd'; dot.style.color = '#856404'; dot.style.opacity = '1';
   }
 }
 window.addEventListener('online',  function(){ _showDot(true);  flushQueue(); });
 window.addEventListener('offline', function(){ _showDot(false); });
+setInterval(async function(){ if (navigator.onLine){ var q=await _getQueue(); if(q.length) flushQueue(); } }, 30000);
 
-/* Reintento automático cada 30 s */
-setInterval(async function(){
-  if (!navigator.onLine) return;
-  var q = await _getQueue();
-  if (q.length) flushQueue();
-}, 30000);
-
-/* ── Helpers caché ───────────────────────────────────────────── */
 function _cSet(k,v){ return _lf ? _lf.setItem(k,v).catch(function(){}) : Promise.resolve(); }
 function _cGet(k)  { return _lf ? _lf.getItem(k).catch(function(){ return null; }) : Promise.resolve(null); }
-
 async function _getQueue(){ return (await _cGet('pq')) || []; }
 
 async function _enqueue(op){
@@ -53,7 +41,6 @@ async function _enqueue(op){
   console.log('[Q]',op.op,op.table);
 }
 
-/* ── Subir cola al reconectar ─────────────────────────────────── */
 async function flushQueue(){
   if (_syncQueued || !navigator.onLine) return;
   _syncQueued = true;
@@ -76,57 +63,48 @@ async function flushQueue(){
       } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
     }
     await _cSet('pq', failed);
-    /* Limpiar pend_* del caché → evita duplicados */
     ['ic','cc'].forEach(async function(key){
       var c = (await _cGet(key)) || [];
       await _cSet(key, c.filter(function(r){ return !(typeof r.id==='string' && r.id.startsWith('pend_')); }));
     });
-    /* Recargar datos reales */
     var rd = await Promise.all([_loadInvOnline(), _loadContOnline()]);
-    if (rd[0]) { invData=rd[0];  renderInv();  }
-    if (rd[1]) { contData=rd[1]; renderCont(); }
+    if (rd[0]){ invData=rd[0];  renderInv();  }
+    if (rd[1]){ contData=rd[1]; renderCont(); }
     if (rd[0]||rd[1]) renderDash();
     _updateBadge();
   } finally { _syncQueued=false; }
 }
 
 async function _loadInvOnline(){
-  try {
-    var {data,error} = await _sb.from('inventario').select('*').order('id',{ascending:false});
-    if (!error && data) return data.map(invFromDb);
-  } catch(e){}
+  try { var {data,error}=await _sb.from('inventario').select('*').order('id',{ascending:false}); if(!error&&data) return data.map(invFromDb); } catch(e){}
   return null;
 }
 async function _loadContOnline(){
-  try {
-    var {data,error} = await _sb.from('contabilidad').select('*').order('id',{ascending:false});
-    if (!error && data) return data.map(contFromDb);
-  } catch(e){}
+  try { var {data,error}=await _sb.from('contabilidad').select('*').order('id',{ascending:false}); if(!error&&data) return data.map(contFromDb); } catch(e){}
   return null;
 }
 
-/* ── Badge de pendientes ─────────────────────────────────────── */
 function _setBadgeText(txt, clickable){
   var b=document.getElementById('pq-badge');
   if (!b) return;
-  b.textContent=txt;
-  b.style.cursor=clickable?'pointer':'default';
-  b.style.display='block';
+  b.textContent=txt; b.style.cursor=clickable?'pointer':'default'; b.style.display='block';
 }
 async function _updateBadge(){
-  var q = await _getQueue();
-  var b = document.getElementById('pq-badge');
-  if (!q.length){ if(b) b.style.display='none'; return; }
-  if (!b){
-    b=document.createElement('div'); b.id='pq-badge';
-    b.style.cssText='position:fixed;top:10px;right:12px;z-index:9998;background:#f59e0b;'+
-      'color:#fff;border-radius:99px;font-size:11px;font-weight:700;padding:4px 12px;'+
-      'box-shadow:0 2px 6px rgba(0,0,0,.25);cursor:pointer;';
-    b.onclick=function(){ flushQueue(); };
-    document.body.appendChild(b);
-  }
-  b.textContent='⬆ '+q.length+' pendiente'+(q.length!==1?'s':'')+' — subir';
-  b.style.display='block'; b.style.cursor='pointer'; b.style.background='#f59e0b';
+  try {
+    var q = await _getQueue();
+    var b = document.getElementById('pq-badge');
+    if (!q.length){ if(b) b.style.display='none'; return; }
+    if (!b){
+      b=document.createElement('div'); b.id='pq-badge';
+      b.style.cssText='position:fixed;top:10px;right:12px;z-index:9998;background:#f59e0b;'+
+        'color:#fff;border-radius:99px;font-size:11px;font-weight:700;padding:4px 12px;'+
+        'box-shadow:0 2px 6px rgba(0,0,0,.25);cursor:pointer;';
+      b.onclick=function(){ flushQueue(); };
+      document.body.appendChild(b);
+    }
+    b.textContent='⬆ '+q.length+' pendiente'+(q.length!==1?'s':'')+' — subir';
+    b.style.display='block'; b.style.cursor='pointer'; b.style.background='#f59e0b';
+  } catch(e){}
 }
 
 /* ── ESTADO GLOBAL ────────────────────────────────────────────── */
@@ -171,14 +149,14 @@ function initRealtime() {
     })
     .subscribe(function (s) { console.log('Realtime:', s); });
 
-  /* Polling cada 5 s — SOLO online y sin pendientes en cola */
+  /* Polling cada 5 s — solo online y sin pendientes */
   _pollInterval = setInterval(function(){
     if (!currentUser || !navigator.onLine || _syncQueued) return;
     _getQueue().then(function(q){
-      if (q.length) return;  /* hay pendientes: esperar */
+      if (q.length) return;
       Promise.all([dbLoadInv(), dbLoadCont()])
         .then(function(r){ invData=r[0]; contData=r[1]; renderInv(); renderCont(); renderDash(); })
-        .catch(function(e){ console.warn('Poll err:',e); });
+        .catch(function(e){ console.warn('Poll:',e); });
     });
   }, 5000);
 
@@ -212,30 +190,27 @@ function actionToDb(r)   { return { id: r.id, type: r.type, by: r.by, affected: 
 
 /* ── Inventario — CRUD ────────────────────────────────────────── */
 async function dbLoadInv() {
-  /* Intentar Supabase primero */
   if (navigator.onLine && !_syncQueued) {
     var d = await _loadInvOnline();
     if (d) {
-      /* Filtrar deletes pendientes → no reaparecen */
-      var q = await _getQueue();
-      var delIds = q.filter(function(op){ return op.table==='inv'&&op.op==='delete'; }).map(function(op){ return op.id; });
-      d = d.filter(function(r){ return delIds.indexOf(r.id)===-1; });
-      /* Aplicar edits pendientes → cambios offline se ven */
+      var q=await _getQueue();
+      /* No mostrar items borrados offline */
+      var delIds=q.filter(function(op){ return op.table==='inv'&&op.op==='delete'; }).map(function(op){ return op.id; });
+      d=d.filter(function(r){ return delIds.indexOf(r.id)===-1; });
+      /* Aplicar edits pendientes → los cambios offline se ven */
       q.filter(function(op){ return op.table==='inv'&&op.op==='update'; }).forEach(function(op){
         var idx=d.findIndex(function(r){ return r.id===op.id; });
-        if (idx>=0) d[idx]=Object.assign({},d[idx],invFromDb(Object.assign({id:op.id},op.data)));
+        if (idx>=0) d[idx]=Object.assign({},d[idx],{estado:op.data.estado,guia:op.data.guia,bodega:op.data.bodega,pin:op.data.pin});
       });
       /* Agregar inserts pend_* que aún no se subieron */
       var cached=(await _cGet('ic'))||[];
       var pends=cached.filter(function(r){ return typeof r.id==='string'&&r.id.startsWith('pend_'); });
-      d = pends.concat(d);
-      await _cSet('ic', d);
-      return d;
+      d=pends.concat(d);
+      await _cSet('ic',d); return d;
     }
   }
-  /* Offline: usar caché */
-  var c = await _cGet('ic');
-  if (c&&c.length){ console.log('[Offline] inv caché:',c.length); return c; }
+  var c=await _cGet('ic');
+  if (c&&c.length){ return c; }
   return [];
 }
 
@@ -246,38 +221,30 @@ async function dbInsertInv(item) {
       var {data,error}=await _sb.from('inventario').insert(dbItem).select('id').single();
       if (!error&&data){
         var c=(await _cGet('ic'))||[];
-        c=c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; });
-        await _cSet('ic',c);
+        await _cSet('ic', c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; }));
         return data.id;
       }
-    } catch(e){ console.warn('[Offline] insert inv:',e); }
+    } catch(e){ console.warn('[Q] insert inv:',e); }
   }
-  /* Sin red: ID temporal */
   var tid='pend_'+Date.now();
   await _enqueue({op:'insert',table:'inv',data:dbItem,_tid:tid});
   var c2=(await _cGet('ic'))||[];
   var found=false;
-  c2=c2.map(function(r){
-    if (!found&&(r.id===null||r.id===undefined)&&r.guia===item.guia){ found=true; return Object.assign({},r,{id:tid}); }
-    return r;
-  });
+  c2=c2.map(function(r){ if (!found&&(r.id===null||r.id===undefined)&&r.guia===item.guia){ found=true; return Object.assign({},r,{id:tid}); } return r; });
   if (!found) c2.unshift(Object.assign({},item,{id:tid}));
-  await _cSet('ic',c2);
-  await _updateBadge();
-  return tid;
+  await _cSet('ic',c2); await _updateBadge(); return tid;
 }
 
 async function dbUpdateInv(item) {
   var dbItem={guia:item.guia,bodega:item.bodega,pin:item.pin,estado:item.estado,fecha:item.fecha};
-  /* Actualizar caché local siempre primero */
   var c=(await _cGet('ic'))||[];
   await _cSet('ic', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
   if (navigator.onLine) {
-    try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(error) console.error('upd inv:',error); }
-    catch(e){ console.warn('upd inv:',e); }
-    return;
+    var _saved=false;
+    try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(!error) _saved=true; else console.error('upd inv:',error); } catch(e){ console.warn('upd inv exc:',e); }
+    if (_saved) return;
+    /* Sin internet real aunque onLine=true → encolar igual */
   }
-  /* Sin red: encolar — si ya existe un insert pend_ para este ID, actualizar ese data */
   var q=await _getQueue();
   var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
   if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
@@ -290,9 +257,10 @@ async function dbDeleteInv(id) {
   await _cSet('ic', c.filter(function(r){ return r.id!==id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   if (navigator.onLine&&!isPend) {
-    try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(error) console.error('del inv:',error); }
-    catch(e){ console.warn('del inv:',e); }
-    return;
+    var _saved=false;
+    try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(!error) _saved=true; else console.error('del inv:',error); } catch(e){ console.warn('del inv exc:',e); }
+    if (_saved) return;
+    /* Sin internet real → encolar */
   }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid===id); })); }
@@ -315,12 +283,11 @@ async function dbLoadCont() {
       var cached=(await _cGet('cc'))||[];
       var pends=cached.filter(function(r){ return typeof r.id==='string'&&r.id.startsWith('pend_'); });
       d=pends.concat(d);
-      await _cSet('cc',d);
-      return d;
+      await _cSet('cc',d); return d;
     }
   }
   var c=await _cGet('cc');
-  if (c&&c.length){ console.log('[Offline] cont caché:',c.length); return c; }
+  if (c&&c.length){ return c; }
   return [];
 }
 
@@ -334,20 +301,15 @@ async function dbInsertCont(item) {
         await _cSet('cc', c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; }));
         return data.id;
       }
-    } catch(e){ console.warn('[Offline] insert cont:',e); }
+    } catch(e){ console.warn('[Q] insert cont:',e); }
   }
   var tid='pend_'+Date.now();
   await _enqueue({op:'insert',table:'cont',data:dbItem,_tid:tid});
   var c2=(await _cGet('cc'))||[];
   var found=false;
-  c2=c2.map(function(r){
-    if (!found&&(r.id===null||r.id===undefined)&&r.equipo===item.equipo){ found=true; return Object.assign({},r,{id:tid}); }
-    return r;
-  });
+  c2=c2.map(function(r){ if (!found&&(r.id===null||r.id===undefined)&&r.equipo===item.equipo){ found=true; return Object.assign({},r,{id:tid}); } return r; });
   if (!found) c2.unshift(Object.assign({},item,{id:tid}));
-  await _cSet('cc',c2);
-  await _updateBadge();
-  return tid;
+  await _cSet('cc',c2); await _updateBadge(); return tid;
 }
 
 async function dbUpdateCont(item) {
@@ -355,9 +317,10 @@ async function dbUpdateCont(item) {
   var c=(await _cGet('cc'))||[];
   await _cSet('cc', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
   if (navigator.onLine) {
-    try { var {error}=await _sb.from('contabilidad').update(dbItem).eq('id',item.id); if(error) console.error('upd cont:',error); }
-    catch(e){ console.warn('upd cont:',e); }
-    return;
+    var _saved=false;
+    try { var {error}=await _sb.from('contabilidad').update(dbItem).eq('id',item.id); if(!error) _saved=true; else console.error('upd cont:',error); } catch(e){ console.warn('upd cont exc:',e); }
+    if (_saved) return;
+    /* Sin internet real → encolar */
   }
   var q=await _getQueue();
   var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid===item.id; });
@@ -371,9 +334,10 @@ async function dbDeleteCont(id) {
   await _cSet('cc', c.filter(function(r){ return r.id!==id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   if (navigator.onLine&&!isPend) {
-    try { var {error}=await _sb.from('contabilidad').delete().eq('id',id); if(error) console.error('del cont:',error); }
-    catch(e){ console.warn('del cont:',e); }
-    return;
+    var _saved=false;
+    try { var {error}=await _sb.from('contabilidad').delete().eq('id',id); if(!error) _saved=true; else console.error('del cont:',error); } catch(e){ console.warn('del cont exc:',e); }
+    if (_saved) return;
+    /* Sin internet real → encolar */
   }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid===id); })); }
@@ -494,13 +458,11 @@ async function loadAll() {
 
   showScreen('screen-login');
 
-  /* Mostrar caché inmediatamente mientras carga */
   try {
     var _ci=await _cGet('ic'); var _cc=await _cGet('cc');
     if (_ci) invData=_ci;
     if (_cc) contData=_cc;
     await _updateBadge();
-    /* Subir pendientes ANTES de recargar Supabase */
     if (navigator.onLine) await flushQueue();
   } catch(e){ console.warn('loadAll init:',e); }
 
@@ -858,11 +820,12 @@ function getDupGuias() {
 }
 
 async function toggleEstado(id) {
-  var rec = invData.find(function (r) { return r.id === id; }); if (!rec) return;
+  var rec = invData.find(function(r){ return r.id === id || r.id === +id; });
+  if (!rec) return;
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
   await dbUpdateInv(rec);
-  broadcastInv();
+  if (navigator.onLine) broadcastInv();
   renderInv();
 }
 
@@ -876,14 +839,11 @@ async function addInventario() {
   renderInv();
   var newId = await dbInsertInv(item);
   if (newId) {
-    item.id = newId;
-    renderInv();
+    item.id = newId; renderInv();
     if (typeof newId!=='string'||!newId.startsWith('pend_')) broadcastInv();
   } else {
     invData = invData.filter(function(r){ return r!==item; });
-    renderInv();
-    alert('Error al guardar. Intenta de nuevo.');
-    return;
+    renderInv(); alert('Error al guardar. Intenta de nuevo.'); return;
   }
   clearInvForm();
 }
@@ -901,10 +861,11 @@ async function delInv(id) {
   renderInv(); renderDash();
 }
 
-function estadoLabel(e) {
-  if (e === 'entregado')    return '<button class="estado-btn estado-entregado"    onclick="toggleEstado(ID)">✓ Entregado</button>';
-  if (e === 'no_entregado') return '<button class="estado-btn estado-no-entregado" onclick="toggleEstado(ID)">✕ No entregado</button>';
-  return '<button class="estado-btn estado-pendiente" onclick="toggleEstado(ID)">○ Pendiente</button>';
+function estadoLabel(e, id) {
+  var sid = typeof id === 'string' ? "'" + id + "'" : id;
+  if (e === 'entregado')    return '<button class="estado-btn estado-entregado"    onclick="toggleEstado(' + sid + ')">✓ Entregado</button>';
+  if (e === 'no_entregado') return '<button class="estado-btn estado-no-entregado" onclick="toggleEstado(' + sid + ')">✕ No entregado</button>';
+  return '<button class="estado-btn estado-pendiente" onclick="toggleEstado(' + sid + ')">○ Pendiente</button>';
 }
 
 function renderInv() {
@@ -940,7 +901,7 @@ function renderInv() {
     var _qi = typeof r.id==='string' ? "'"+r.id+"'" : r.id;
     var del     = isAdmin() ? '<button class="btn-del" onclick="delInv('+_qi+')">✕</button>' : '';
     var editBtn = isAdmin() ? '<button class="btn-ghost" style="padding:3px 9px;font-size:12px" onclick="openEditInv('+_qi+')">✎</button>' : '';
-    var estBtn   = estadoLabel(estado).replace('ID', r.id);
+    var estBtn   = estadoLabel(estado, r.id);
     var bodegaTxt = r.bodega === '—' ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : r.bodega;
     var pinTxt    = r.pin === '—'   ? '<span style="color:var(--text3);font-style:italic;font-size:12px">—</span>' : '<span style="font-weight:600;font-family:monospace">' + r.pin + '</span>';
     return '<tr class="' + rowClass + '">'
@@ -1019,14 +980,11 @@ async function addContabilidad() {
   renderCont();
   var newId = await dbInsertCont(item);
   if (newId) {
-    item.id = newId;
-    renderCont();
+    item.id = newId; renderCont();
     if (typeof newId!=='string'||!newId.startsWith('pend_')) broadcastCont();
   } else {
     contData = contData.filter(function(r){ return r!==item; });
-    renderCont();
-    alert('Error al guardar. Intenta de nuevo.');
-    return;
+    renderCont(); alert('Error al guardar. Intenta de nuevo.'); return;
   }
   clearContForm();
 }
