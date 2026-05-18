@@ -31,6 +31,7 @@ window.addEventListener('online',  function(){ _showDot(true);  flushQueue(); })
 window.addEventListener('offline', function(){ _showDot(false); });
 setInterval(async function(){ if (navigator.onLine){ var q=await _getQueue(); if(q.length) flushQueue(); } }, 30000);
 
+/* ── Helpers caché ───────────────────────────────────────────── */
 function _cSet(k,v){ return _lf ? _lf.setItem(k,v).catch(function(){}) : Promise.resolve(); }
 function _cGet(k)  { return _lf ? _lf.getItem(k).catch(function(){ return null; }) : Promise.resolve(null); }
 async function _getQueue(){ return (await _cGet('pq')) || []; }
@@ -63,6 +64,8 @@ async function flushQueue(){
       } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
     }
     await _cSet('pq', failed);
+
+    /* Limpiar pend_* del caché → evita duplicados */
     ['ic','cc'].forEach(async function(key){
       var c = (await _cGet(key)) || [];
       await _cSet(key, c.filter(function(r){ return !(typeof r.id==='string' && r.id.startsWith('pend_')); }));
