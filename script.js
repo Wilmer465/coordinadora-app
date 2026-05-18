@@ -479,27 +479,36 @@ async function loadAll() {
     }
   }
 
-  var results = await Promise.all([
+  /* Cargar usuarios e inventario primero — son los más importantes */
+  var criticalResults = await Promise.all([
     dbLoadInv(),
     dbLoadCont(),
-    dbLoadUsers(),
-    dbLoadLog(),
-    dbLoadActions()
+    dbLoadUsers()
   ]);
 
-  invData      = results[0];
-  contData     = results[1];
-  users        = results[2];
-  sessionLog   = results[3];
-  adminActions = results[4];
+  invData  = criticalResults[0];
+  contData = criticalResults[1];
+  users    = criticalResults[2];
 
   invData.forEach(function (r) { if (!r.estado) r.estado = 'pendiente'; });
 
+  /* Entrar a la app ya con los datos críticos */
   if (currentUser) {
     enterApp();
   } else {
     showScreen('screen-login');
   }
+
+  /* Cargar logs en segundo plano sin bloquear la UI */
+  Promise.all([dbLoadLog(), dbLoadActions()]).then(function(r) {
+    sessionLog   = r[0];
+    adminActions = r[1];
+    /* Si la pestaña de Admin ya está visible, refrescar */
+    var logBody = document.getElementById('log-body');
+    var actBody = document.getElementById('actions-body');
+    if (logBody) renderLog();
+    if (actBody) renderActions();
+  }).catch(function(e) { console.warn('Logs err:', e); });
 }
 
 
