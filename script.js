@@ -63,7 +63,7 @@ async function flushQueue(){
           if (op._tid) {
             var key = op.table === 'inv' ? 'ic' : 'cc';
             var cache = (await _cGet(key)) || [];
-            cache = cache.map(function(r) { return (r.id === op._tid) ? Object.assign({}, r, { id: data.id }) : r; });
+            cache = cache.map(function(r) { return (r.id == op._tid) ? Object.assign({}, r, { id: data.id }) : r; });
             await _cSet(key, cache);
           }
           console.log('[Q] ✓ insert', op.table);
@@ -74,7 +74,7 @@ async function flushQueue(){
           // aplicar update a la caché local
           var key = op.table === 'inv' ? 'ic' : 'cc';
           var cache = (await _cGet(key)) || [];
-          cache = cache.map(function(r) { return r.id === op.id ? Object.assign({}, r, op.data) : r; });
+          cache = cache.map(function(r) { return r.id == op.id ? Object.assign({}, r, op.data) : r; });
           await _cSet(key, cache);
           console.log('[Q] ✓ update', op.table);
 
@@ -83,7 +83,7 @@ async function flushQueue(){
           if (error) { console.error('[Q] error delete:', error); failed.push(op); continue; }
           var key = op.table === 'inv' ? 'ic' : 'cc';
           var cache = (await _cGet(key)) || [];
-          cache = cache.filter(function(r) { return r.id !== op.id && r.id !== op._tid; });
+          cache = cache.filter(function(r) { return r.id != op.id && r.id != op._tid; });
           await _cSet(key, cache);
           console.log('[Q] ✓ delete', op.table);
         }
@@ -103,7 +103,7 @@ async function flushQueue(){
       var delIds = q.filter(function(op){ return op.table==='inv'&&op.op==='delete'; }).map(function(op){ return op.id; });
       var d = serverInv.filter(function(r){ return delIds.indexOf(r.id)===-1; });
       q.filter(function(op){ return op.table==='inv'&&op.op==='update'; }).forEach(function(op){
-        var idx = d.findIndex(function(r){ return r.id===op.id; });
+        var idx = d.findIndex(function(r){ return r.id==op.id; });
         if (idx>=0) d[idx] = Object.assign({}, d[idx], {
           estado: op.data.estado || d[idx].estado,
           guia:   op.data.guia   || d[idx].guia,
@@ -123,7 +123,7 @@ async function flushQueue(){
       var delIds2 = q2.filter(function(op){ return op.table==='cont'&&op.op==='delete'; }).map(function(op){ return op.id; });
       var d2 = serverCont.filter(function(r){ return delIds2.indexOf(r.id)===-1; });
       q2.filter(function(op){ return op.table==='cont'&&op.op==='update'; }).forEach(function(op){
-        var idx = d2.findIndex(function(r){ return r.id===op.id; });
+        var idx = d2.findIndex(function(r){ return r.id==op.id; });
         if (idx>=0) d2[idx] = Object.assign({}, d2[idx], contFromDb(Object.assign({id:op.id},op.data)));
       });
       var cached2 = (await _cGet('cc')) || [];
@@ -312,13 +312,13 @@ async function dbInsertInv(item) {
 async function dbUpdateInv(item) {
   var dbItem={guia:item.guia,bodega:item.bodega,pin:item.pin,estado:item.estado,fecha:item.fecha};
   var c=(await _cGet('ic'))||[];
-  await _cSet('ic', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
+  await _cSet('ic', c.map(function(r){ return r.id==item.id?Object.assign({},r,item):r; }));
   if (navigator.onLine) {
     try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(error) console.error('upd inv:',error); } catch(e){}
     return;
   }
   var q=await _getQueue();
-  var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
+  var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid==item.id; });
   if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
   else { await _enqueue({op:'update',table:'inv',id:item.id,data:dbItem}); }
   await _updateBadge();
@@ -326,14 +326,14 @@ async function dbUpdateInv(item) {
 
 async function dbDeleteInv(id) {
   var c=(await _cGet('ic'))||[];
-  await _cSet('ic', c.filter(function(r){ return r.id!==id; }));
+  await _cSet('ic', c.filter(function(r){ return r.id!=id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   if (navigator.onLine&&!isPend) {
     try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(error) console.error('del inv:',error); } catch(e){}
     return;
   }
   var q=await _getQueue();
-  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid===id); })); }
+  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid==id); })); }
   else        { await _enqueue({op:'delete',table:'inv',id:id}); }
   await _updateBadge();
 }
@@ -396,7 +396,7 @@ async function dbUpdateCont(item) {
     return;
   }
   var q=await _getQueue();
-  var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid===item.id; });
+  var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid==item.id; });
   if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
   else { await _enqueue({op:'update',table:'cont',id:item.id,data:dbItem}); }
   await _updateBadge();
@@ -411,7 +411,7 @@ async function dbDeleteCont(id) {
     return;
   }
   var q=await _getQueue();
-  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid===id); })); }
+  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid==id); })); }
   else        { await _enqueue({op:'delete',table:'cont',id:id}); }
   await _updateBadge();
 }
@@ -905,7 +905,7 @@ async function toggleEstado(id) {
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
   /* Actualizar invData en memoria para que renderInv refleje el cambio ya */
-  invData = invData.map(function(r){ return r.id === rec.id ? Object.assign({}, r, { estado: rec.estado }) : r; });
+  invData = invData.map(function(r){ return r.id == rec.id ? Object.assign({}, r, { estado: rec.estado }) : r; });
   renderInv();  /* mostrar cambio inmediatamente */
   await dbUpdateInv(rec);  /* guardar en caché/Supabase */
   if (navigator.onLine) broadcastInv();
@@ -935,7 +935,7 @@ async function delInv(id) {
   var rec = invData.find(function (r) { return r.id === id; }); if (!rec) return;
   var ok = await showModal('Eliminar guía', '¿Eliminar la guía "' + rec.guia + '"?', 'Eliminar');
   if (!ok) return;
-  invData = invData.filter(function (r) { return r.id !== id; });
+  invData = invData.filter(function (r) { return r.id != id; });
   await dbDeleteInv(id);
   broadcastInv();
   await logAction('eliminacion_inv', rec.guia,
@@ -1020,7 +1020,7 @@ async function confirmEditInv() {
   var p     = document.getElementById('ei-pin').value.trim();
   var errEl = document.getElementById('ei-err');
   if (!g) { errEl.textContent = 'La guía es obligatoria.'; errEl.style.display = 'block'; return; }
-  var r = invData.find(function (x) { return x.id === _editInvId; }); if (!r) return;
+  var r = invData.find(function (x) { return x.id == _editInvId; }); if (!r) return;
   var old = Object.assign({}, r);
   r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
   await dbUpdateInv(r);
@@ -1073,7 +1073,7 @@ async function addContabilidad() {
 
 async function delCont(id) {
   if (!isAdmin()) return;
-  var rec = contData.find(function (r) { return r.id === id; }); if (!rec) return;
+  var rec = contData.find(function (r) { return r.id == id; }); if (!rec) return;
   var ok = await showModal('Eliminar registro', '¿Eliminar el registro de ' + rec.equipo + ' (' + rec.fecha + ')?', 'Eliminar');
   if (!ok) return;
   contData = contData.filter(function (r) { return r.id !== id; });
@@ -1152,7 +1152,7 @@ async function confirmEditCont() {
     if (inp.dataset.tipo === 'M') m += q * v; else b += q * v;
   });
   if (m + b === 0) { errEl.textContent = 'Ingresa al menos una denominación.'; errEl.style.display = 'block'; return; }
-  var r = contData.find(function (x) { return x.id === _editContId; }); if (!r) return;
+  var r = contData.find(function (x) { return x.id == _editContId; }); if (!r) return;
   var oldTotal = r.total;
   r.fecha  = new Date(fecha).toLocaleString('es-CO');
   r.equipo = equipo; r.valorM = m; r.valorB = b; r.total = m + b; r.denoms = denoms;
