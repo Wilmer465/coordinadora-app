@@ -49,29 +49,93 @@ async function flushQueue(){
     var queue = await _getQueue();
     if (!queue.length){ _updateBadge(); return; }
     var failed = [];
-    for (var i=0; i<queue.length; i++){
+
+    for (var i = 0; i < queue.length; i++) {
       var op = queue[i];
       try {
-        if (op.u && op.ro) await _sb.rpc('set_session_user',{p_username:op.u, p_role:op.ro});
-        var tbl = op.table==='inv' ? 'inventario' : 'contabilidad';
-        var res;
-        if      (op.op==='insert') res = await _sb.from(tbl).insert(op.data);
-        else if (op.op==='update') res = await _sb.from(tbl).update(op.data).eq('id',op.id);
-        else if (op.op==='delete') res = await _sb.from(tbl).delete().eq('id',op.id);
-        if (res && res.error){ console.error('[Q] error:',res.error); failed.push(op); }
-        else console.log('[Q] ✓',op.op,op.table);
-      } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
+        if (op.u && op.ro) await _sb.rpc('set_session_user', { p_username: op.u, p_role: op.ro });
+        var tbl = op.table === 'inv' ? 'inventario' : 'contabilidad';
+
+        if (op.op === 'insert') {
+          var { data, error } = await _sb.from(tbl).insert(op.data).select('id').single();
+          if (error || !data) { console.error('[Q] error insert:', error || 'no data'); failed.push(op); continue; }
+          // reemplazar id pendiente en caché por el id real
+          if (op._tid) {
+            var key = op.table === 'inv' ? 'ic' : 'cc';
+            var cache = (await _cGet(key)) || [];
+            cache = cache.map(function(r) { return (r.id === op._tid) ? Object.assign({}, r, { id: data.id }) : r; });
+            await _cSet(key, cache);
+          }
+          console.log('[Q] ✓ insert', op.table);
+
+        } else if (op.op === 'update') {
+          var { error } = await _sb.from(tbl).update(op.data).eq('id', op.id);
+          if (error) { console.error('[Q] error update:', error); failed.push(op); continue; }
+          // aplicar update a la caché local
+          var key = op.table === 'inv' ? 'ic' : 'cc';
+          var cache = (await _cGet(key)) || [];
+          cache = cache.map(function(r) { return r.id === op.id ? Object.assign({}, r, op.data) : r; });
+          await _cSet(key, cache);
+          console.log('[Q] ✓ update', op.table);
+
+        } else if (op.op === 'delete') {
+          var { error } = await _sb.from(tbl).delete().eq('id', op.id);
+          if (error) { console.error('[Q] error delete:', error); failed.push(op); continue; }
+          var key = op.table === 'inv' ? 'ic' : 'cc';
+          var cache = (await _cGet(key)) || [];
+          cache = cache.filter(function(r) { return r.id !== op.id && r.id !== op._tid; });
+          await _cSet(key, cache);
+          console.log('[Q] ✓ delete', op.table);
+        }
+
+      } catch (e) { console.warn('[Q] exc:', e); failed.push(op); }
     }
+
+    // guardar las operaciones que fallaron
     await _cSet('pq', failed);
-    ['ic','cc'].forEach(async function(key){
-      var c = (await _cGet(key)) || [];
-      await _cSet(key, c.filter(function(r){ return !(typeof r.id==='string' && r.id.startsWith('pend_')); }));
-    });
-    var rd = await Promise.all([_loadInvOnline(), _loadContOnline()]);
-    if (rd[0]){ invData=rd[0];  renderInv();  }
-    if (rd[1]){ contData=rd[1]; renderCont(); }
-    if (rd[0]||rd[1]) renderDash();
+
+    // refrescar desde el servidor y volver a agregar pendientes en caché
+    var serverInv = await _loadInvOnline();
+    var serverCont = await _loadContOnline();
+
+    if (serverInv) {
+      var q = failed.concat([]);
+      var delIds = q.filter(function(op){ return op.table==='inv'&&op.op==='delete'; }).map(function(op){ return op.id; });
+      var d = serverInv.filter(function(r){ return delIds.indexOf(r.id)===-1; });
+      q.filter(function(op){ return op.table==='inv'&&op.op==='update'; }).forEach(function(op){
+        var idx = d.findIndex(function(r){ return r.id===op.id; });
+        if (idx>=0) d[idx] = Object.assign({}, d[idx], {
+          estado: op.data.estado || d[idx].estado,
+          guia:   op.data.guia   || d[idx].guia,
+          bodega: op.data.bodega || d[idx].bodega,
+          pin:    op.data.pin    || d[idx].pin
+        });
+      });
+      var cached = (await _cGet('ic')) || [];
+      var pends = cached.filter(function(r){ return typeof r.id==='string'&&r.id.startsWith('pend_'); });
+      d = pends.concat(d);
+      await _cSet('ic', d);
+      invData = d; renderInv();
+    }
+
+    if (serverCont) {
+      var q2 = failed.concat([]);
+      var delIds2 = q2.filter(function(op){ return op.table==='cont'&&op.op==='delete'; }).map(function(op){ return op.id; });
+      var d2 = serverCont.filter(function(r){ return delIds2.indexOf(r.id)===-1; });
+      q2.filter(function(op){ return op.table==='cont'&&op.op==='update'; }).forEach(function(op){
+        var idx = d2.findIndex(function(r){ return r.id===op.id; });
+        if (idx>=0) d2[idx] = Object.assign({}, d2[idx], contFromDb(Object.assign({id:op.id},op.data)));
+      });
+      var cached2 = (await _cGet('cc')) || [];
+      var pends2 = cached2.filter(function(r){ return typeof r.id==='string'&&r.id.startsWith('pend_'); });
+      d2 = pends2.concat(d2);
+      await _cSet('cc', d2);
+      contData = d2; renderCont();
+    }
+
+    if (serverInv || serverCont) renderDash();
     _updateBadge();
+
   } finally { _syncQueued=false; }
 }
 
@@ -226,7 +290,12 @@ async function dbInsertInv(item) {
       var {data,error}=await _sb.from('inventario').insert(dbItem).select('id').single();
       if (!error&&data){
         var c=(await _cGet('ic'))||[];
-        await _cSet('ic', c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; }));
+        var updated=false;
+        c=c.map(function(r){
+          if (!updated && (r.id===null||r.id===undefined) && r.guia===item.guia && r.fecha===item.fecha){ updated=true; return Object.assign({},r,{id:data.id}); }
+          return r;
+        });
+        if (updated) await _cSet('ic', c);
         return data.id;
       }
     } catch(e){ console.warn('[Q] insert inv:',e); }
@@ -299,7 +368,12 @@ async function dbInsertCont(item) {
       var {data,error}=await _sb.from('contabilidad').insert(dbItem).select('id').single();
       if (!error&&data){
         var c=(await _cGet('cc'))||[];
-        await _cSet('cc', c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; }));
+        var updated=false;
+        c=c.map(function(r){
+          if (!updated && (r.id===null||r.id===undefined) && r.equipo===item.equipo && r.fecha===item.fecha){ updated=true; return Object.assign({},r,{id:data.id}); }
+          return r;
+        });
+        if (updated) await _cSet('cc', c);
         return data.id;
       }
     } catch(e){ console.warn('[Q] insert cont:',e); }
