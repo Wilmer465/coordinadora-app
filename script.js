@@ -39,68 +39,187 @@ async function _enqueue(op){
   var q=await _getQueue(); q.push(op); await _cSet('pq',q);
   console.log('[Q]',op.op,op.table);
   /* Auto-sincronizar si hay conexión; si no, esperar clic manual */
-  if (navigator.onLine) flushQueue();
+  if (navigator.onLine) {
+  setTimeout(function () {
+    flushQueue();
+  }, 300);
+
+}
 }
 
 async function flushQueue(){
   if (_syncQueued || !navigator.onLine) return;
+
   _syncQueued = true;
   _setBadgeText('⏳ Sincronizando…', false);
+
   try {
+
     var queue = await _getQueue();
-    if (!queue.length){ _updateBadge(); return; }
-    /* FIX: guardar los ts de los ops que vamos a procesar para detectar
-       ops que se añadan a la cola MIENTRAS estamos sincronizando */
-    var originalTs = queue.map(function(op){ return op.ts; });
-    var failed = [];
-    var successTids = []; /* _tids de inserts que SÍ subieron */
-    for (var i=0; i<queue.length; i++){
-      var op = queue[i];
-      try {
-        /* Validar que DELETE/UPDATE tengan ID válido */
-        if ((op.op==='delete'||op.op==='update') && (op.id===null||op.id===undefined)) {
-          console.warn('[Q] skip: id inválido para',op.op,op.id);
-          continue; /* No agregar a failed, simplemente ignorar */
-        }
-        if (op.u && op.ro) await _sb.rpc('set_session_user',{p_username:op.u, p_role:op.ro});
-        var tbl = op.table==='inv' ? 'inventario' : 'contabilidad';
-        var res;
-        if      (op.op==='insert') res = await _sb.from(tbl).insert(op.data);
-        else if (op.op==='update') res = await _sb.from(tbl).update(op.data).eq('id',op.id);
-        else if (op.op==='delete') res = await _sb.from(tbl).delete().eq('id',op.id);
-        if (res && res.error){ console.error('[Q] error:',res.error); failed.push(op); }
-        else {
-          console.log('[Q] ✓',op.op,op.table);
-          /* FIX: solo anotar los _tids que realmente subieron */
-          if (op.op==='insert' && op._tid) successTids.push(op._tid);
-        }
-      } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
+
+    /* FIX CRÍTICO */
+    if (!queue.length){
+      _updateBadge();
+      _syncQueued = false;
+      return;
     }
-    /* FIX: releer la cola para rescatar ops añadidos DURANTE la sincronización
-       (ej: el usuario guardó una edición mientras se sincronizaba otro item)
-       y fusionarlos con los fallidos en lugar de sobreescribir toda la cola */
+
+    var originalTs = queue.map(function(op){
+      return op.ts;
+    });
+
+    var failed = [];
+    var successTids = [];
+
+    for (var i = 0; i < queue.length; i++){
+
+      var op = queue[i];
+
+      try {
+
+        /* Validar IDs */
+        if (
+          (op.op === 'delete' || op.op === 'update') &&
+          (op.id === null || op.id === undefined)
+        ) {
+          console.warn('[Q] skip invalid id:', op);
+          continue;
+        }
+
+        /* Restaurar sesión */
+        if (op.u && op.ro) {
+          await _sb.rpc('set_session_user', {
+            p_username: op.u,
+            p_role: op.ro
+          });
+        }
+
+        var tbl =
+          op.table === 'inv'
+            ? 'inventario'
+            : 'contabilidad';
+
+        var res;
+
+        if (op.op === 'insert') {
+
+          res = await _sb
+            .from(tbl)
+            .insert(op.data);
+
+        } else if (op.op === 'update') {
+
+          res = await _sb
+            .from(tbl)
+            .update(op.data)
+            .eq('id', op.id);
+
+        } else if (op.op === 'delete') {
+
+          res = await _sb
+            .from(tbl)
+            .delete()
+            .eq('id', op.id);
+        }
+
+        if (res && res.error) {
+
+          console.error('[Q] error:', res.error);
+          failed.push(op);
+
+        } else {
+
+          console.log('[Q] synced:', op.op, op.table);
+
+          if (op.op === 'insert' && op._tid) {
+            successTids.push(op._tid);
+          }
+        }
+
+      } catch(e){
+
+        console.error('[Q] flush exception:', e);
+        failed.push(op);
+      }
+    }
+
+    /* Recuperar cambios agregados durante sync */
     var currentQueue = await _getQueue();
+
     var addedDuringFlush = currentQueue.filter(function(op){
       return originalTs.indexOf(op.ts) === -1;
     });
-    await _cSet('pq', failed.concat(addedDuringFlush));
-    /* FIX: solo eliminar del caché los pend_* que subieron exitosamente,
-       NO los que fallaron — de lo contrario se pierden si Supabase no responde */
-    await Promise.all(['ic','cc'].map(async function(key){
-      var c = (await _cGet(key)) || [];
-      await _cSet(key, c.filter(function(r){
-        return !(typeof r.id==='string' && r.id.startsWith('pend_') && successTids.indexOf(r.id) !== -1);
-      }));
-    }));
-    /* FIX: usar dbLoadInv/dbLoadCont en lugar de _loadInvOnline/_loadContOnline
-       para que los pendientes que quedaron en cola se fusionen con los datos del servidor */
-    var rd = await Promise.all([dbLoadInv(), dbLoadCont()]);
-    if (rd[0]){ invData=rd[0];  renderInv();  }
-    if (rd[1]){ contData=rd[1]; renderCont(); }
-    if (rd[0]||rd[1]) renderDash();
+
+    await _cSet(
+      'pq',
+      failed.concat(addedDuringFlush)
+    );
+
+    /* Limpiar pendientes exitosos */
+    await Promise.all(
+
+      ['ic','cc'].map(async function(key){
+
+        var c = (await _cGet(key)) || [];
+
+        await _cSet(
+          key,
+          c.filter(function(r){
+
+            return !(
+              typeof r.id === 'string' &&
+              r.id.startsWith('pend_') &&
+              successTids.indexOf(r.id) !== -1
+            );
+
+          })
+        );
+
+      })
+
+    );
+
+    /* Recargar datos */
+    var rd = await Promise.all([
+      dbLoadInv(),
+      dbLoadCont()
+    ]);
+
+    if (rd[0]) {
+      invData = rd[0];
+      renderInv();
+    }
+
+    if (rd[1]) {
+      contData = rd[1];
+      renderCont();
+    }
+
+    if (rd[0] || rd[1]) {
+      renderDash();
+    }
+
     _updateBadge();
-  } finally { _syncQueued=false; }
+
+  } finally {
+
+    /* FIX CRÍTICO */
+    _syncQueued = false;
+
+    /* Reintento automático */
+    var q = await _getQueue();
+
+    if (navigator.onLine && q.length > 0) {
+
+      console.log('[Q] retry pending sync...');
+
+      setTimeout(function(){
+        flushQueue();
+      }, 2000);
+    }
+  }
 }
+
 
 async function _loadInvOnline(){
   try { var {data,error}=await _sb.from('inventario').select('*').order('id',{ascending:false}); if(!error&&data) return data.map(invFromDb); } catch(e){}
