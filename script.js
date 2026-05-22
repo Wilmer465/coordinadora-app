@@ -27,7 +27,7 @@ function _showDot(online) {
     dot.style.background = '#fff3cd'; dot.style.color = '#856404'; dot.style.opacity = '1';
   }
 }
-window.addEventListener('online',  function(){ _showDot(true); });
+window.addEventListener('online',  function(){ _showDot(true); flushQueue(); });
 window.addEventListener('offline', function(){ _showDot(false); });
 
 function _cSet(k,v){ return _lf ? _lf.setItem(k,v).catch(function(){}) : Promise.resolve(); }
@@ -38,6 +38,8 @@ async function _enqueue(op){
   op.ts=Date.now(); op.u=currentUser; op.ro=currentRole;
   var q=await _getQueue(); q.push(op); await _cSet('pq',q);
   console.log('[Q]',op.op,op.table);
+  /* Auto-sincronizar si hay conexión; si no, esperar clic manual */
+  if (navigator.onLine) flushQueue();
 }
 
 async function flushQueue(){
