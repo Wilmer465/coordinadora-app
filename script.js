@@ -63,10 +63,10 @@ async function flushQueue(){
       } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
     }
     await _cSet('pq', failed);
-    ['ic','cc'].forEach(async function(key){
+    await Promise.all(['ic','cc'].map(async function(key){
       var c = (await _cGet(key)) || [];
       await _cSet(key, c.filter(function(r){ return !(typeof r.id==='string' && r.id.startsWith('pend_')); }));
-    });
+    }));
     var rd = await Promise.all([_loadInvOnline(), _loadContOnline()]);
     if (rd[0]){ invData=rd[0];  renderInv();  }
     if (rd[1]){ contData=rd[1]; renderCont(); }
@@ -245,8 +245,7 @@ async function dbUpdateInv(item) {
   var c=(await _cGet('ic'))||[];
   await _cSet('ic', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
   if (navigator.onLine) {
-    try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(error) console.error('upd inv:',error); } catch(e){}
-    return;
+    try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(!error) { await _updateBadge(); return; } console.error('upd inv:',error); } catch(e){ console.warn('[Q] update inv:',e); }
   }
   var q=await _getQueue();
   var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
@@ -260,8 +259,7 @@ async function dbDeleteInv(id) {
   await _cSet('ic', c.filter(function(r){ return r.id!==id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   if (navigator.onLine&&!isPend) {
-    try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(error) console.error('del inv:',error); } catch(e){}
-    return;
+    try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(!error) { await _updateBadge(); return; } console.error('del inv:',error); } catch(e){ console.warn('[Q] delete inv:',e); }
   }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid===id); })); }
@@ -318,8 +316,7 @@ async function dbUpdateCont(item) {
   var c=(await _cGet('cc'))||[];
   await _cSet('cc', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
   if (navigator.onLine) {
-    try { var {error}=await _sb.from('contabilidad').update(dbItem).eq('id',item.id); if(error) console.error('upd cont:',error); } catch(e){}
-    return;
+    try { var {error}=await _sb.from('contabilidad').update(dbItem).eq('id',item.id); if(!error) { await _updateBadge(); return; } console.error('upd cont:',error); } catch(e){ console.warn('[Q] update cont:',e); }
   }
   var q=await _getQueue();
   var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid===item.id; });
@@ -333,8 +330,7 @@ async function dbDeleteCont(id) {
   await _cSet('cc', c.filter(function(r){ return r.id!==id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   if (navigator.onLine&&!isPend) {
-    try { var {error}=await _sb.from('contabilidad').delete().eq('id',id); if(error) console.error('del cont:',error); } catch(e){}
-    return;
+    try { var {error}=await _sb.from('contabilidad').delete().eq('id',id); if(!error) { await _updateBadge(); return; } console.error('del cont:',error); } catch(e){ console.warn('[Q] delete cont:',e); }
   }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid===id); })); }
