@@ -48,6 +48,9 @@ async function flushQueue(){
   try {
     var queue = await _getQueue();
     if (!queue.length){ _updateBadge(); return; }
+    /* FIX: guardar los ts de los ops que vamos a procesar para detectar
+       ops que se añadan a la cola MIENTRAS estamos sincronizando */
+    var originalTs = queue.map(function(op){ return op.ts; });
     var failed = [];
     var successTids = []; /* _tids de inserts que SÍ subieron */
     for (var i=0; i<queue.length; i++){
@@ -72,7 +75,14 @@ async function flushQueue(){
         }
       } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
     }
-    await _cSet('pq', failed);
+    /* FIX: releer la cola para rescatar ops añadidos DURANTE la sincronización
+       (ej: el usuario guardó una edición mientras se sincronizaba otro item)
+       y fusionarlos con los fallidos en lugar de sobreescribir toda la cola */
+    var currentQueue = await _getQueue();
+    var addedDuringFlush = currentQueue.filter(function(op){
+      return originalTs.indexOf(op.ts) === -1;
+    });
+    await _cSet('pq', failed.concat(addedDuringFlush));
     /* FIX: solo eliminar del caché los pend_* que subieron exitosamente,
        NO los que fallaron — de lo contrario se pierden si Supabase no responde */
     await Promise.all(['ic','cc'].map(async function(key){
