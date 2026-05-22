@@ -369,33 +369,138 @@ async function dbInsertInv(item) {
 }
 
 async function dbUpdateInv(item) {
-  var dbItem={guia:item.guia,bodega:item.bodega,pin:item.pin,estado:item.estado,fecha:item.fecha};
-  /* Guardar en caché local inmediatamente, sin llamar a Supabase */
-  var c=(await _cGet('ic'))||[];
-  await _cSet('ic', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
-  /* Siempre encolar — flushQueue sincroniza en background */
-  var isPend=typeof item.id==='string'&&item.id.startsWith('pend_');
-  var isValidId=typeof item.id==='number'&&item.id>0;
-  if (isPend||isValidId) {
-    var q=await _getQueue();
-    var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
-    if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
-    else if (isValidId) { await _enqueue({op:'update',table:'inv',id:item.id,data:dbItem}); }
+
+  var dbItem = {
+    guia: item.guia,
+    bodega: item.bodega,
+    pin: item.pin,
+    estado: item.estado,
+    fecha: item.fecha
+  };
+
+  /* UPDATE INMEDIATO EN MEMORIA */
+  invData = invData.map(function(r){
+    return r.id === item.id
+      ? Object.assign({}, r, item)
+      : r;
+  });
+
+  /* RENDER INMEDIATO */
+  renderInv();
+  renderDash();
+
+  /* GUARDAR CACHE EN BACKGROUND */
+  setTimeout(async function(){
+
+    var c = (await _cGet('ic')) || [];
+
+    await _cSet(
+      'ic',
+      c.map(function(r){
+        return r.id === item.id
+          ? Object.assign({}, r, item)
+          : r;
+      })
+    );
+
+  }, 0);
+
+  var isPend =
+    typeof item.id === 'string' &&
+    item.id.startsWith('pend_');
+
+  var isValidId =
+    typeof item.id === 'number' &&
+    item.id > 0;
+
+  if (isPend || isValidId) {
+
+    var q = await _getQueue();
+
+    var pi = q.findIndex(function(op){
+      return (
+        op.table === 'inv' &&
+        op.op === 'insert' &&
+        op._tid === item.id
+      );
+    });
+
+    if (pi >= 0) {
+
+      q[pi].data = dbItem;
+      await _cSet('pq', q);
+
+    } else if (isValidId) {
+
+      await _enqueue({
+        op:'update',
+        table:'inv',
+        id:item.id,
+        data:dbItem
+      });
+    }
   }
-  await _updateBadge();
+
+  _updateBadge();
 }
 
 async function dbDeleteInv(id) {
-  /* Eliminar del caché local inmediatamente */
-  var c=(await _cGet('ic'))||[];
-  await _cSet('ic', c.filter(function(r){ return r.id!==id; }));
-  /* Siempre encolar — flushQueue sincroniza en background */
-  var isPend=typeof id==='string'&&id.startsWith('pend_');
-  var isValidId=typeof id==='number'&&id>0;
-  var q=await _getQueue();
-  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid===id); })); }
-  else if (isValidId) { await _enqueue({op:'delete',table:'inv',id:id}); }
-  await _updateBadge();
+
+  /* ELIMINAR EN MEMORIA INMEDIATAMENTE */
+  invData = invData.filter(function(r){
+    return r.id !== id;
+  });
+
+  /* RENDER INMEDIATO */
+  renderInv();
+  renderDash();
+
+  /* GUARDAR CACHE EN BACKGROUND */
+  setTimeout(async function(){
+
+    var c = (await _cGet('ic')) || [];
+
+    await _cSet(
+      'ic',
+      c.filter(function(r){
+        return r.id !== id;
+      })
+    );
+
+  }, 0);
+
+  var isPend =
+    typeof id === 'string' &&
+    id.startsWith('pend_');
+
+  var isValidId =
+    typeof id === 'number' &&
+    id > 0;
+
+  var q = await _getQueue();
+
+  if (isPend) {
+
+    await _cSet(
+      'pq',
+      q.filter(function(op){
+        return !(
+          op.table === 'inv' &&
+          op._tid === id
+        );
+      })
+    );
+
+  } else if (isValidId) {
+
+    await _enqueue({
+      op:'delete',
+      table:'inv',
+      id:id
+    });
+  }
+
+  _updateBadge();
 }
 
 /* ── Contabilidad — CRUD ──────────────────────────────────────── */
