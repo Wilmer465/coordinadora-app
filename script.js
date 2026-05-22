@@ -49,6 +49,7 @@ async function flushQueue(){
     var queue = await _getQueue();
     if (!queue.length){ _updateBadge(); return; }
     var failed = [];
+    var successTids = []; /* _tids de inserts que SÍ subieron */
     for (var i=0; i<queue.length; i++){
       var op = queue[i];
       try {
@@ -64,15 +65,25 @@ async function flushQueue(){
         else if (op.op==='update') res = await _sb.from(tbl).update(op.data).eq('id',op.id);
         else if (op.op==='delete') res = await _sb.from(tbl).delete().eq('id',op.id);
         if (res && res.error){ console.error('[Q] error:',res.error); failed.push(op); }
-        else console.log('[Q] ✓',op.op,op.table);
+        else {
+          console.log('[Q] ✓',op.op,op.table);
+          /* FIX: solo anotar los _tids que realmente subieron */
+          if (op.op==='insert' && op._tid) successTids.push(op._tid);
+        }
       } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
     }
     await _cSet('pq', failed);
+    /* FIX: solo eliminar del caché los pend_* que subieron exitosamente,
+       NO los que fallaron — de lo contrario se pierden si Supabase no responde */
     await Promise.all(['ic','cc'].map(async function(key){
       var c = (await _cGet(key)) || [];
-      await _cSet(key, c.filter(function(r){ return !(typeof r.id==='string' && r.id.startsWith('pend_')); }));
+      await _cSet(key, c.filter(function(r){
+        return !(typeof r.id==='string' && r.id.startsWith('pend_') && successTids.indexOf(r.id) !== -1);
+      }));
     }));
-    var rd = await Promise.all([_loadInvOnline(), _loadContOnline()]);
+    /* FIX: usar dbLoadInv/dbLoadCont en lugar de _loadInvOnline/_loadContOnline
+       para que los pendientes que quedaron en cola se fusionen con los datos del servidor */
+    var rd = await Promise.all([dbLoadInv(), dbLoadCont()]);
     if (rd[0]){ invData=rd[0];  renderInv();  }
     if (rd[1]){ contData=rd[1]; renderCont(); }
     if (rd[0]||rd[1]) renderDash();
