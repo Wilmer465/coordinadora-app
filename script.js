@@ -362,16 +362,18 @@ async function dbDeleteCont(id) {
 
 /* ── Usuarios — CRUD ──────────────────────────────────────────── */
 async function dbLoadUsers() {
-  try {
-    var { data, error } = await _sb.from('users_safe').select('*');
-    if (!error && data && data.length) {
-      await _cSet('uc', data); /* guardar en caché */
-      return data;
+  /* Devolver caché inmediatamente */
+  var cached = (await _cGet('uc')) || [];
+  /* Actualizar desde Supabase en background sin bloquear */
+  _sb.from('users_safe').select('*').then(function(res) {
+    if (!res.error && res.data && res.data.length) {
+      _cSet('uc', res.data);
+      users = res.data;
+      var logBody = document.getElementById('u-list');
+      if (logBody) renderUList();
     }
-  } catch(e) { console.warn('dbLoadUsers:', e); }
-  /* fallback: devolver caché local si Supabase no responde */
-  var cached = await _cGet('uc');
-  return cached || [];
+  }).catch(function(e){ console.warn('dbLoadUsers bg:', e); });
+  return cached;
 }
 
 async function dbCreateUser(username, password, role) {
