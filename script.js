@@ -244,13 +244,17 @@ async function dbUpdateInv(item) {
   var dbItem={guia:item.guia,bodega:item.bodega,pin:item.pin,estado:item.estado,fecha:item.fecha};
   var c=(await _cGet('ic'))||[];
   await _cSet('ic', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
-  if (navigator.onLine) {
+  var isPend=typeof item.id==='string'&&item.id.startsWith('pend_');
+  var isValidId=typeof item.id==='number'&&item.id>0;
+  if (navigator.onLine&&isValidId) {
     try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(!error) { await _updateBadge(); return; } console.error('upd inv:',error); } catch(e){ console.warn('[Q] update inv:',e); }
   }
-  var q=await _getQueue();
-  var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
-  if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
-  else { await _enqueue({op:'update',table:'inv',id:item.id,data:dbItem}); }
+  if (isPend||isValidId) {
+    var q=await _getQueue();
+    var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
+    if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
+    else if (isValidId) { await _enqueue({op:'update',table:'inv',id:item.id,data:dbItem}); }
+  }
   await _updateBadge();
 }
 
@@ -258,12 +262,13 @@ async function dbDeleteInv(id) {
   var c=(await _cGet('ic'))||[];
   await _cSet('ic', c.filter(function(r){ return r.id!==id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
-  if (navigator.onLine&&!isPend) {
+  var isValidId=typeof id==='number'&&id>0;
+  if (navigator.onLine&&!isPend&&isValidId) {
     try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(!error) { await _updateBadge(); return; } console.error('del inv:',error); } catch(e){ console.warn('[Q] delete inv:',e); }
   }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid===id); })); }
-  else        { await _enqueue({op:'delete',table:'inv',id:id}); }
+  else if (isValidId) { await _enqueue({op:'delete',table:'inv',id:id}); }
   await _updateBadge();
 }
 
@@ -315,13 +320,17 @@ async function dbUpdateCont(item) {
   var dbItem={fecha:item.fecha,equipo:item.equipo,valor_m:item.valorM,valor_b:item.valorB,total:item.total,denoms:item.denoms||null};
   var c=(await _cGet('cc'))||[];
   await _cSet('cc', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
-  if (navigator.onLine) {
+  var isPend=typeof item.id==='string'&&item.id.startsWith('pend_');
+  var isValidId=typeof item.id==='number'&&item.id>0;
+  if (navigator.onLine&&isValidId) {
     try { var {error}=await _sb.from('contabilidad').update(dbItem).eq('id',item.id); if(!error) { await _updateBadge(); return; } console.error('upd cont:',error); } catch(e){ console.warn('[Q] update cont:',e); }
   }
-  var q=await _getQueue();
-  var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid===item.id; });
-  if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
-  else { await _enqueue({op:'update',table:'cont',id:item.id,data:dbItem}); }
+  if (isPend||isValidId) {
+    var q=await _getQueue();
+    var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid===item.id; });
+    if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
+    else if (isValidId) { await _enqueue({op:'update',table:'cont',id:item.id,data:dbItem}); }
+  }
   await _updateBadge();
 }
 
@@ -329,12 +338,13 @@ async function dbDeleteCont(id) {
   var c=(await _cGet('cc'))||[];
   await _cSet('cc', c.filter(function(r){ return r.id!==id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
-  if (navigator.onLine&&!isPend) {
+  var isValidId=typeof id==='number'&&id>0;
+  if (navigator.onLine&&!isPend&&isValidId) {
     try { var {error}=await _sb.from('contabilidad').delete().eq('id',id); if(!error) { await _updateBadge(); return; } console.error('del cont:',error); } catch(e){ console.warn('[Q] delete cont:',e); }
   }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid===id); })); }
-  else        { await _enqueue({op:'delete',table:'cont',id:id}); }
+  else if (isValidId) { await _enqueue({op:'delete',table:'cont',id:id}); }
   await _updateBadge();
 }
 
