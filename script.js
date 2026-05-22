@@ -29,7 +29,6 @@ function _showDot(online) {
 }
 window.addEventListener('online',  function(){ _showDot(true);  flushQueue(); });
 window.addEventListener('offline', function(){ _showDot(false); });
-setInterval(async function(){ if (navigator.onLine){ var q=await _getQueue(); if(q.length) flushQueue(); } }, 30000);
 
 function _cSet(k,v){ return _lf ? _lf.setItem(k,v).catch(function(){}) : Promise.resolve(); }
 function _cGet(k)  { return _lf ? _lf.getItem(k).catch(function(){ return null; }) : Promise.resolve(null); }
@@ -175,16 +174,7 @@ function initRealtime() {
     })
     .subscribe(function (s) { console.log('Realtime:', s); });
 
-  /* Polling cada 5 s — solo online y sin pendientes */
-  _pollInterval = setInterval(function(){
-    if (!currentUser || !navigator.onLine || _syncQueued) return;
-    _getQueue().then(function(q){
-      if (q.length) return;
-      Promise.all([dbLoadInv(), dbLoadCont()])
-        .then(function(r){ invData=r[0]; contData=r[1]; renderInv(); renderCont(); renderDash(); })
-        .catch(function(e){ console.warn('Poll:',e); });
-    });
-  }, 5000);
+  /* Polling desactivado: sync solo al reconectar o al hacer clic en el badge */
 
   console.log('Sync activo');
 }
@@ -268,13 +258,12 @@ async function dbInsertInv(item) {
 
 async function dbUpdateInv(item) {
   var dbItem={guia:item.guia,bodega:item.bodega,pin:item.pin,estado:item.estado,fecha:item.fecha};
+  /* Guardar en caché local inmediatamente, sin llamar a Supabase */
   var c=(await _cGet('ic'))||[];
   await _cSet('ic', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
+  /* Siempre encolar — flushQueue sincroniza en background */
   var isPend=typeof item.id==='string'&&item.id.startsWith('pend_');
   var isValidId=typeof item.id==='number'&&item.id>0;
-  if (navigator.onLine&&isValidId) {
-    try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(!error) { await _updateBadge(); return; } console.error('upd inv:',error); } catch(e){ console.warn('[Q] update inv:',e); }
-  }
   if (isPend||isValidId) {
     var q=await _getQueue();
     var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
@@ -344,13 +333,12 @@ async function dbInsertCont(item) {
 
 async function dbUpdateCont(item) {
   var dbItem={fecha:item.fecha,equipo:item.equipo,valor_m:item.valorM,valor_b:item.valorB,total:item.total,denoms:item.denoms||null};
+  /* Guardar en caché local inmediatamente, sin llamar a Supabase */
   var c=(await _cGet('cc'))||[];
   await _cSet('cc', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
+  /* Siempre encolar — flushQueue sincroniza en background */
   var isPend=typeof item.id==='string'&&item.id.startsWith('pend_');
   var isValidId=typeof item.id==='number'&&item.id>0;
-  if (navigator.onLine&&isValidId) {
-    try { var {error}=await _sb.from('contabilidad').update(dbItem).eq('id',item.id); if(!error) { await _updateBadge(); return; } console.error('upd cont:',error); } catch(e){ console.warn('[Q] update cont:',e); }
-  }
   if (isPend||isValidId) {
     var q=await _getQueue();
     var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid===item.id; });
