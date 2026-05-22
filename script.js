@@ -52,6 +52,11 @@ async function flushQueue(){
     for (var i=0; i<queue.length; i++){
       var op = queue[i];
       try {
+        /* Validar que DELETE/UPDATE tengan ID válido */
+        if ((op.op==='delete'||op.op==='update') && (op.id===null||op.id===undefined)) {
+          console.warn('[Q] skip: id inválido para',op.op,op.id);
+          continue; /* No agregar a failed, simplemente ignorar */
+        }
         if (op.u && op.ro) await _sb.rpc('set_session_user',{p_username:op.u, p_role:op.ro});
         var tbl = op.table==='inv' ? 'inventario' : 'contabilidad';
         var res;
