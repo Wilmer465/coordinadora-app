@@ -274,13 +274,12 @@ async function dbUpdateInv(item) {
 }
 
 async function dbDeleteInv(id) {
+  /* Eliminar del caché local inmediatamente */
   var c=(await _cGet('ic'))||[];
   await _cSet('ic', c.filter(function(r){ return r.id!==id; }));
+  /* Siempre encolar — flushQueue sincroniza en background */
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   var isValidId=typeof id==='number'&&id>0;
-  if (navigator.onLine&&!isPend&&isValidId) {
-    try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(!error) { await _updateBadge(); return; } console.error('del inv:',error); } catch(e){ console.warn('[Q] delete inv:',e); }
-  }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid===id); })); }
   else if (isValidId) { await _enqueue({op:'delete',table:'inv',id:id}); }
@@ -349,13 +348,12 @@ async function dbUpdateCont(item) {
 }
 
 async function dbDeleteCont(id) {
+  /* Eliminar del caché local inmediatamente */
   var c=(await _cGet('cc'))||[];
   await _cSet('cc', c.filter(function(r){ return r.id!==id; }));
+  /* Siempre encolar — flushQueue sincroniza en background */
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   var isValidId=typeof id==='number'&&id>0;
-  if (navigator.onLine&&!isPend&&isValidId) {
-    try { var {error}=await _sb.from('contabilidad').delete().eq('id',id); if(!error) { await _updateBadge(); return; } console.error('del cont:',error); } catch(e){ console.warn('[Q] delete cont:',e); }
-  }
   var q=await _getQueue();
   if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid===id); })); }
   else if (isValidId) { await _enqueue({op:'delete',table:'cont',id:id}); }
@@ -364,9 +362,16 @@ async function dbDeleteCont(id) {
 
 /* ── Usuarios — CRUD ──────────────────────────────────────────── */
 async function dbLoadUsers() {
-  var { data, error } = await _sb.from('users_safe').select('*');
-  if (error) { console.error('Error cargando usuarios:', error); return []; }
-  return data || [];
+  try {
+    var { data, error } = await _sb.from('users_safe').select('*');
+    if (!error && data && data.length) {
+      await _cSet('uc', data); /* guardar en caché */
+      return data;
+    }
+  } catch(e) { console.warn('dbLoadUsers:', e); }
+  /* fallback: devolver caché local si Supabase no responde */
+  var cached = await _cGet('uc');
+  return cached || [];
 }
 
 async function dbCreateUser(username, password, role) {
