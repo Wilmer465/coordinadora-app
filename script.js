@@ -27,7 +27,7 @@ function _showDot(online) {
     dot.style.background = '#fff3cd'; dot.style.color = '#856404'; dot.style.opacity = '1';
   }
 }
-window.addEventListener('online',  function(){ _showDot(true);  flushQueue(); });
+window.addEventListener('online',  function(){ _showDot(true); });
 window.addEventListener('offline', function(){ _showDot(false); });
 
 function _cSet(k,v){ return _lf ? _lf.setItem(k,v).catch(function(){}) : Promise.resolve(); }
