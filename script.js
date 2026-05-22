@@ -237,16 +237,7 @@ async function dbLoadInv() {
 
 async function dbInsertInv(item) {
   var dbItem={guia:item.guia,bodega:item.bodega,pin:item.pin,estado:item.estado||'pendiente',fecha:item.fecha};
-  if (navigator.onLine) {
-    try {
-      var {data,error}=await _sb.from('inventario').insert(dbItem).select('id').single();
-      if (!error&&data){
-        var c=(await _cGet('ic'))||[];
-        await _cSet('ic', c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; }));
-        return data.id;
-      }
-    } catch(e){ console.warn('[Q] insert inv:',e); }
-  }
+  /* Siempre encolar — flushQueue sincroniza solo al hacer clic */
   var tid='pend_'+Date.now();
   await _enqueue({op:'insert',table:'inv',data:dbItem,_tid:tid});
   var c2=(await _cGet('ic'))||[];
@@ -311,16 +302,7 @@ async function dbLoadCont() {
 
 async function dbInsertCont(item) {
   var dbItem={fecha:item.fecha,equipo:item.equipo,valor_m:item.valorM,valor_b:item.valorB,total:item.total,denoms:item.denoms||null};
-  if (navigator.onLine) {
-    try {
-      var {data,error}=await _sb.from('contabilidad').insert(dbItem).select('id').single();
-      if (!error&&data){
-        var c=(await _cGet('cc'))||[];
-        await _cSet('cc', c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; }));
-        return data.id;
-      }
-    } catch(e){ console.warn('[Q] insert cont:',e); }
-  }
+  /* Siempre encolar — flushQueue sincroniza solo al hacer clic */
   var tid='pend_'+Date.now();
   await _enqueue({op:'insert',table:'cont',data:dbItem,_tid:tid});
   var c2=(await _cGet('cc'))||[];
@@ -860,8 +842,7 @@ async function toggleEstado(id) {
   /* Actualizar invData en memoria para que renderInv refleje el cambio ya */
   invData = invData.map(function(r){ return r.id === rec.id ? Object.assign({}, r, { estado: rec.estado }) : r; });
   renderInv();  /* mostrar cambio inmediatamente */
-  await dbUpdateInv(rec);  /* guardar en caché/Supabase */
-  if (navigator.onLine) broadcastInv();
+  await dbUpdateInv(rec);  /* guardar en caché/cola */
 }
 
 async function addInventario() {
@@ -875,7 +856,6 @@ async function addInventario() {
   var newId = await dbInsertInv(item);
   if (newId) {
     item.id = newId; renderInv();
-    if (typeof newId!=='string'||!newId.startsWith('pend_')) broadcastInv();
   } else {
     invData = invData.filter(function(r){ return r!==item; });
     renderInv(); alert('Error al guardar. Intenta de nuevo.'); return;
@@ -890,7 +870,6 @@ async function delInv(id) {
   if (!ok) return;
   invData = invData.filter(function (r) { return r.id !== id; });
   await dbDeleteInv(id);
-  broadcastInv();
   await logAction('eliminacion_inv', rec.guia,
     'Eliminó guía "' + rec.guia + '" | Bodega: ' + rec.bodega + ' | PIN: ' + rec.pin);
   renderInv(); renderDash();
@@ -977,7 +956,6 @@ async function confirmEditInv() {
   var old = Object.assign({}, r);
   r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
   await dbUpdateInv(r);
-  if (navigator.onLine) broadcastInv();
   await logAction('edicion_inv', r.guia,
     'Editó guía: "' + old.guia + '" → "' + r.guia + '" | Bodega: "' + old.bodega + '" → "' + r.bodega + '" | PIN: "' + old.pin + '" → "' + r.pin + '"');
   closeEditInv(); renderInv();
@@ -1016,7 +994,7 @@ async function addContabilidad() {
   var newId = await dbInsertCont(item);
   if (newId) {
     item.id = newId; renderCont();
-    if (typeof newId!=='string'||!newId.startsWith('pend_')) broadcastCont();
+
   } else {
     contData = contData.filter(function(r){ return r!==item; });
     renderCont(); alert('Error al guardar. Intenta de nuevo.'); return;
@@ -1031,7 +1009,6 @@ async function delCont(id) {
   if (!ok) return;
   contData = contData.filter(function (r) { return r.id !== id; });
   await dbDeleteCont(id);
-  broadcastCont();
   await logAction('eliminacion_cont', rec.equipo,
     'Eliminó registro contable | Equipo: ' + rec.equipo + ' | Fecha: ' + rec.fecha + ' | Total: ' + fmt(rec.total));
   renderCont();
@@ -1110,7 +1087,6 @@ async function confirmEditCont() {
   r.fecha  = new Date(fecha).toLocaleString('es-CO');
   r.equipo = equipo; r.valorM = m; r.valorB = b; r.total = m + b; r.denoms = denoms;
   await dbUpdateCont(r);
-  if (navigator.onLine) broadcastCont();
   await logAction('edicion_cont', r.equipo,
     'Editó registro contable "' + r.equipo + '" | Total: ' + fmt(oldTotal) + ' → ' + fmt(r.total));
   closeEditCont(); renderCont();
