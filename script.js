@@ -49,93 +49,29 @@ async function flushQueue(){
     var queue = await _getQueue();
     if (!queue.length){ _updateBadge(); return; }
     var failed = [];
-
-    for (var i = 0; i < queue.length; i++) {
+    for (var i=0; i<queue.length; i++){
       var op = queue[i];
       try {
-        if (op.u && op.ro) await _sb.rpc('set_session_user', { p_username: op.u, p_role: op.ro });
-        var tbl = op.table === 'inv' ? 'inventario' : 'contabilidad';
-
-        if (op.op === 'insert') {
-          var { data, error } = await _sb.from(tbl).insert(op.data).select('id').single();
-          if (error || !data) { console.error('[Q] error insert:', error || 'no data'); failed.push(op); continue; }
-          // reemplazar id pendiente en caché por el id real
-          if (op._tid) {
-            var key = op.table === 'inv' ? 'ic' : 'cc';
-            var cache = (await _cGet(key)) || [];
-            cache = cache.map(function(r) { return (r.id == op._tid) ? Object.assign({}, r, { id: data.id }) : r; });
-            await _cSet(key, cache);
-          }
-          console.log('[Q] ✓ insert', op.table);
-
-        } else if (op.op === 'update') {
-          var { error } = await _sb.from(tbl).update(op.data).eq('id', op.id);
-          if (error) { console.error('[Q] error update:', error); failed.push(op); continue; }
-          // aplicar update a la caché local
-          var key = op.table === 'inv' ? 'ic' : 'cc';
-          var cache = (await _cGet(key)) || [];
-          cache = cache.map(function(r) { return r.id == op.id ? Object.assign({}, r, op.data) : r; });
-          await _cSet(key, cache);
-          console.log('[Q] ✓ update', op.table);
-
-        } else if (op.op === 'delete') {
-          var { error } = await _sb.from(tbl).delete().eq('id', op.id);
-          if (error) { console.error('[Q] error delete:', error); failed.push(op); continue; }
-          var key = op.table === 'inv' ? 'ic' : 'cc';
-          var cache = (await _cGet(key)) || [];
-          cache = cache.filter(function(r) { return r.id != op.id && r.id != op._tid; });
-          await _cSet(key, cache);
-          console.log('[Q] ✓ delete', op.table);
-        }
-
-      } catch (e) { console.warn('[Q] exc:', e); failed.push(op); }
+        if (op.u && op.ro) await _sb.rpc('set_session_user',{p_username:op.u, p_role:op.ro});
+        var tbl = op.table==='inv' ? 'inventario' : 'contabilidad';
+        var res;
+        if      (op.op==='insert') res = await _sb.from(tbl).insert(op.data);
+        else if (op.op==='update') res = await _sb.from(tbl).update(op.data).eq('id',op.id);
+        else if (op.op==='delete') res = await _sb.from(tbl).delete().eq('id',op.id);
+        if (res && res.error){ console.error('[Q] error:',res.error); failed.push(op); }
+        else console.log('[Q] ✓',op.op,op.table);
+      } catch(e){ console.warn('[Q] exc:',e); failed.push(op); }
     }
-
-    // guardar las operaciones que fallaron
     await _cSet('pq', failed);
-
-    // refrescar desde el servidor y volver a agregar pendientes en caché
-    var serverInv = await _loadInvOnline();
-    var serverCont = await _loadContOnline();
-
-    if (serverInv) {
-      var q = failed.concat([]);
-      var delIds = q.filter(function(op){ return op.table==='inv'&&op.op==='delete'; }).map(function(op){ return op.id; });
-      var d = serverInv.filter(function(r){ return delIds.indexOf(r.id)===-1; });
-      q.filter(function(op){ return op.table==='inv'&&op.op==='update'; }).forEach(function(op){
-        var idx = d.findIndex(function(r){ return r.id==op.id; });
-        if (idx>=0) d[idx] = Object.assign({}, d[idx], {
-          estado: op.data.estado || d[idx].estado,
-          guia:   op.data.guia   || d[idx].guia,
-          bodega: op.data.bodega || d[idx].bodega,
-          pin:    op.data.pin    || d[idx].pin
-        });
-      });
-      var cached = (await _cGet('ic')) || [];
-      var pends = cached.filter(function(r){ return typeof r.id==='string'&&r.id.startsWith('pend_'); });
-      d = pends.concat(d);
-      await _cSet('ic', d);
-      invData = d; renderInv();
-    }
-
-    if (serverCont) {
-      var q2 = failed.concat([]);
-      var delIds2 = q2.filter(function(op){ return op.table==='cont'&&op.op==='delete'; }).map(function(op){ return op.id; });
-      var d2 = serverCont.filter(function(r){ return delIds2.indexOf(r.id)===-1; });
-      q2.filter(function(op){ return op.table==='cont'&&op.op==='update'; }).forEach(function(op){
-        var idx = d2.findIndex(function(r){ return r.id==op.id; });
-        if (idx>=0) d2[idx] = Object.assign({}, d2[idx], contFromDb(Object.assign({id:op.id},op.data)));
-      });
-      var cached2 = (await _cGet('cc')) || [];
-      var pends2 = cached2.filter(function(r){ return typeof r.id==='string'&&r.id.startsWith('pend_'); });
-      d2 = pends2.concat(d2);
-      await _cSet('cc', d2);
-      contData = d2; renderCont();
-    }
-
-    if (serverInv || serverCont) renderDash();
+    ['ic','cc'].forEach(async function(key){
+      var c = (await _cGet(key)) || [];
+      await _cSet(key, c.filter(function(r){ return !(typeof r.id==='string' && r.id.startsWith('pend_')); }));
+    });
+    var rd = await Promise.all([_loadInvOnline(), _loadContOnline()]);
+    if (rd[0]){ invData=rd[0];  renderInv();  }
+    if (rd[1]){ contData=rd[1]; renderCont(); }
+    if (rd[0]||rd[1]) renderDash();
     _updateBadge();
-
   } finally { _syncQueued=false; }
 }
 
@@ -290,12 +226,7 @@ async function dbInsertInv(item) {
       var {data,error}=await _sb.from('inventario').insert(dbItem).select('id').single();
       if (!error&&data){
         var c=(await _cGet('ic'))||[];
-        var updated=false;
-        c=c.map(function(r){
-          if (!updated && (r.id===null||r.id===undefined) && r.guia===item.guia && r.fecha===item.fecha){ updated=true; return Object.assign({},r,{id:data.id}); }
-          return r;
-        });
-        if (updated) await _cSet('ic', c);
+        await _cSet('ic', c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; }));
         return data.id;
       }
     } catch(e){ console.warn('[Q] insert inv:',e); }
@@ -312,13 +243,13 @@ async function dbInsertInv(item) {
 async function dbUpdateInv(item) {
   var dbItem={guia:item.guia,bodega:item.bodega,pin:item.pin,estado:item.estado,fecha:item.fecha};
   var c=(await _cGet('ic'))||[];
-  await _cSet('ic', c.map(function(r){ return r.id==item.id?Object.assign({},r,item):r; }));
+  await _cSet('ic', c.map(function(r){ return r.id===item.id?Object.assign({},r,item):r; }));
   if (navigator.onLine) {
     try { var {error}=await _sb.from('inventario').update(dbItem).eq('id',item.id); if(error) console.error('upd inv:',error); } catch(e){}
     return;
   }
   var q=await _getQueue();
-  var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid==item.id; });
+  var pi=q.findIndex(function(op){ return op.table==='inv'&&op.op==='insert'&&op._tid===item.id; });
   if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
   else { await _enqueue({op:'update',table:'inv',id:item.id,data:dbItem}); }
   await _updateBadge();
@@ -326,14 +257,14 @@ async function dbUpdateInv(item) {
 
 async function dbDeleteInv(id) {
   var c=(await _cGet('ic'))||[];
-  await _cSet('ic', c.filter(function(r){ return r.id!=id; }));
+  await _cSet('ic', c.filter(function(r){ return r.id!==id; }));
   var isPend=typeof id==='string'&&id.startsWith('pend_');
   if (navigator.onLine&&!isPend) {
     try { var {error}=await _sb.from('inventario').delete().eq('id',id); if(error) console.error('del inv:',error); } catch(e){}
     return;
   }
   var q=await _getQueue();
-  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid==id); })); }
+  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='inv'&&op._tid===id); })); }
   else        { await _enqueue({op:'delete',table:'inv',id:id}); }
   await _updateBadge();
 }
@@ -368,12 +299,7 @@ async function dbInsertCont(item) {
       var {data,error}=await _sb.from('contabilidad').insert(dbItem).select('id').single();
       if (!error&&data){
         var c=(await _cGet('cc'))||[];
-        var updated=false;
-        c=c.map(function(r){
-          if (!updated && (r.id===null||r.id===undefined) && r.equipo===item.equipo && r.fecha===item.fecha){ updated=true; return Object.assign({},r,{id:data.id}); }
-          return r;
-        });
-        if (updated) await _cSet('cc', c);
+        await _cSet('cc', c.map(function(r){ return r===item?Object.assign({},item,{id:data.id}):r; }));
         return data.id;
       }
     } catch(e){ console.warn('[Q] insert cont:',e); }
@@ -396,7 +322,7 @@ async function dbUpdateCont(item) {
     return;
   }
   var q=await _getQueue();
-  var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid==item.id; });
+  var pi=q.findIndex(function(op){ return op.table==='cont'&&op.op==='insert'&&op._tid===item.id; });
   if (pi>=0){ q[pi].data=dbItem; await _cSet('pq',q); }
   else { await _enqueue({op:'update',table:'cont',id:item.id,data:dbItem}); }
   await _updateBadge();
@@ -411,7 +337,7 @@ async function dbDeleteCont(id) {
     return;
   }
   var q=await _getQueue();
-  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid==id); })); }
+  if (isPend) { await _cSet('pq', q.filter(function(op){ return !(op.table==='cont'&&op._tid===id); })); }
   else        { await _enqueue({op:'delete',table:'cont',id:id}); }
   await _updateBadge();
 }
@@ -905,7 +831,7 @@ async function toggleEstado(id) {
   var ciclo = { pendiente: 'entregado', entregado: 'no_entregado', no_entregado: 'pendiente' };
   rec.estado = ciclo[rec.estado || 'pendiente'];
   /* Actualizar invData en memoria para que renderInv refleje el cambio ya */
-  invData = invData.map(function(r){ return r.id == rec.id ? Object.assign({}, r, { estado: rec.estado }) : r; });
+  invData = invData.map(function(r){ return r.id === rec.id ? Object.assign({}, r, { estado: rec.estado }) : r; });
   renderInv();  /* mostrar cambio inmediatamente */
   await dbUpdateInv(rec);  /* guardar en caché/Supabase */
   if (navigator.onLine) broadcastInv();
@@ -935,7 +861,7 @@ async function delInv(id) {
   var rec = invData.find(function (r) { return r.id === id; }); if (!rec) return;
   var ok = await showModal('Eliminar guía', '¿Eliminar la guía "' + rec.guia + '"?', 'Eliminar');
   if (!ok) return;
-  invData = invData.filter(function (r) { return r.id != id; });
+  invData = invData.filter(function (r) { return r.id !== id; });
   await dbDeleteInv(id);
   broadcastInv();
   await logAction('eliminacion_inv', rec.guia,
@@ -1020,7 +946,7 @@ async function confirmEditInv() {
   var p     = document.getElementById('ei-pin').value.trim();
   var errEl = document.getElementById('ei-err');
   if (!g) { errEl.textContent = 'La guía es obligatoria.'; errEl.style.display = 'block'; return; }
-  var r = invData.find(function (x) { return x.id == _editInvId; }); if (!r) return;
+  var r = invData.find(function (x) { return x.id === _editInvId; }); if (!r) return;
   var old = Object.assign({}, r);
   r.guia = g; r.bodega = b || '—'; r.pin = p || '—';
   await dbUpdateInv(r);
@@ -1073,7 +999,7 @@ async function addContabilidad() {
 
 async function delCont(id) {
   if (!isAdmin()) return;
-  var rec = contData.find(function (r) { return r.id == id; }); if (!rec) return;
+  var rec = contData.find(function (r) { return r.id === id; }); if (!rec) return;
   var ok = await showModal('Eliminar registro', '¿Eliminar el registro de ' + rec.equipo + ' (' + rec.fecha + ')?', 'Eliminar');
   if (!ok) return;
   contData = contData.filter(function (r) { return r.id !== id; });
@@ -1152,7 +1078,7 @@ async function confirmEditCont() {
     if (inp.dataset.tipo === 'M') m += q * v; else b += q * v;
   });
   if (m + b === 0) { errEl.textContent = 'Ingresa al menos una denominación.'; errEl.style.display = 'block'; return; }
-  var r = contData.find(function (x) { return x.id == _editContId; }); if (!r) return;
+  var r = contData.find(function (x) { return x.id === _editContId; }); if (!r) return;
   var oldTotal = r.total;
   r.fecha  = new Date(fecha).toLocaleString('es-CO');
   r.equipo = equipo; r.valorM = m; r.valorB = b; r.total = m + b; r.denoms = denoms;
