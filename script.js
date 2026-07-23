@@ -154,7 +154,7 @@ window.addEventListener('online', function(){
 
   /* sincronizar automáticamente */
   setTimeout(function(){
-    flushQueue();
+    if (_isOnline()) flushQueue();
   }, 500);
 
 });
@@ -172,30 +172,28 @@ function _cSet(k,v){ return _lf ? _lf.setItem(k,v).catch(function(){}) : Promise
 function _cGet(k)  { return _lf ? _lf.getItem(k).catch(function(){ return null; }) : Promise.resolve(null); }
 async function _getQueue(){ return (await _cGet('pq')) || []; }
 
+function _isOnline() {
+  return typeof navigator !== 'undefined' && navigator.onLine;
+}
+
 async function _enqueue(op){
   op.ts=Date.now();
   var q=await _getQueue(); q.push(op); await _cSet('pq',q);
   console.log('[Q]',op.op,op.table);
-  /* Auto-sincronizar si hay conexión; si no, esperar clic manual */
-  if (navigator.onLine) {
-
-  /* subir automáticamente */
-  flushQueue();
-
-} else {
-
-  /* mostrar badge solo offline */
-  _updateBadge();
-  _showLocalSaveToast();
-  _setSyncState('offline', 'Sin conexión — guardado local activo', { pending: q.length });
-
-}
-
+  if (_isOnline()) {
+    /* Sincronizar solo cuando haya conexión disponible */
+    flushQueue();
+  } else {
+    /* mostrar badge solo offline */
+    _updateBadge();
+    _showLocalSaveToast();
+    _setSyncState('offline', 'Sin conexión — guardado local activo', { pending: q.length });
+  }
 }
 
 
 async function flushQueue(){
-  if (_syncQueued || !navigator.onLine) return;
+  if (_syncQueued || !_isOnline()) return;
 
   _syncQueued = true;
   _setBadgeText('⏳ Sincronizando…', false);
@@ -377,7 +375,7 @@ async function flushQueue(){
     /* Reintento automático */
     var q = await _getQueue();
 
-    if (navigator.onLine && q.length > 0) {
+    if (_isOnline() && q.length > 0) {
       _setSyncState('warn', 'Hay operaciones pendientes por reintentar', { pending: q.length });
 
       console.log('[Q] retry pending sync...');
@@ -963,7 +961,7 @@ async function loadAll() {
       { pending: q0.length }
     );
     await _updateBadge();
-    if (navigator.onLine) await flushQueue();
+    if (_isOnline()) await flushQueue();
   } catch(e){ console.warn('loadAll init:',e); }
 
   var savedUser = sessGet('sess_v9');
